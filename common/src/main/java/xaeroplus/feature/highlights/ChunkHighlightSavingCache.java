@@ -37,6 +37,7 @@ public class ChunkHighlightSavingCache implements ChunkHighlightCache, Closeable
     @Nullable private ChunkHighlightDatabase database = null;
     @Nullable private String currentWorldId;
     private final AtomicBoolean cacheReady = new AtomicBoolean(false);
+    private boolean followsPlayer;
     @Nullable private final String name;
     // Executor used for db read/writes
     @Nullable private ListeningExecutorService dbExecutor;
@@ -70,6 +71,10 @@ public class ChunkHighlightSavingCache implements ChunkHighlightCache, Closeable
     @Override
     public String name() {
         return name;
+    }
+
+    public void setFollowsPlayer(boolean followsPlayer) {
+        this.followsPlayer = followsPlayer;
     }
 
     @Override
@@ -399,6 +404,12 @@ public class ChunkHighlightSavingCache implements ChunkHighlightCache, Closeable
     }
 
     private void loadChunksInViewedDimension() {
+        if (followsPlayer) {
+            loadChunksOnActualDimensionSwitch();
+            getCachesExceptDimension(ChunkUtils.getActualDimension())
+                .forEach(cache -> cache.setWindow(0, 0, 0));
+            return;
+        }
         var viewedDim = Globals.getCurrentDimensionId();
         var cacheForCurrentDimension = getCacheForDimension(viewedDim, true);
         if (cacheForCurrentDimension == null) return;
@@ -480,6 +491,11 @@ public class ChunkHighlightSavingCache implements ChunkHighlightCache, Closeable
         }
         // only update window on an interval
         if (!tickTimer.tick(10 + jitter)) {
+            return;
+        }
+
+        if (followsPlayer) {
+            loadChunksInViewedDimension();
             return;
         }
 

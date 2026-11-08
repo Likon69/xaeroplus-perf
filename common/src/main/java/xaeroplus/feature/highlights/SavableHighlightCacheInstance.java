@@ -13,6 +13,7 @@ public class SavableHighlightCacheInstance {
     private static final Set<SavableHighlightCacheInstance> INSTANCES = ConcurrentHashMap.newKeySet();
     private ChunkHighlightCache cache;
     private final String name;
+    private boolean followsPlayer;
 
     public SavableHighlightCacheInstance(String name) {
         this.name = name;
@@ -49,6 +50,13 @@ public class SavableHighlightCacheInstance {
         INSTANCES.remove(this);
     }
 
+    public synchronized void setFollowsPlayer(boolean followsPlayer) {
+        this.followsPlayer = followsPlayer;
+        if (cache instanceof ChunkHighlightSavingCache savingCache) {
+            savingCache.setFollowsPlayer(followsPlayer);
+        }
+    }
+
     public synchronized void setDiskCache(final boolean disk, final boolean enabled) {
         try {
             cache.onDisable();
@@ -56,7 +64,9 @@ public class SavableHighlightCacheInstance {
                 savingCache.close();
             }
             if (disk) {
-                cache = new ChunkHighlightSavingCache(name);
+                var savingCache = new ChunkHighlightSavingCache(name);
+                savingCache.setFollowsPlayer(followsPlayer);
+                cache = savingCache;
             } else {
                 cache = new ChunkHighlightLocalCache(name);
             }

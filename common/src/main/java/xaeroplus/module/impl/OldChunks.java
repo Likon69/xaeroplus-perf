@@ -101,6 +101,7 @@ public class OldChunks extends Module {
 
     @Override
     public void onEnable() {
+        oldChunksCache.setFollowsPlayer(inverse);
         Globals.drawManager.registry().register(
             DrawFeatureFactory.chunkHighlights(
                 "OldChunks",
@@ -178,5 +179,6 @@ public class OldChunks extends Module {
 
     public void setInverse(final boolean b) {
         this.inverse = b;
+        oldChunksCache.setFollowsPlayer(inverse);
     }
 }
