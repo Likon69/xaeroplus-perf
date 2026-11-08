@@ -38,7 +38,7 @@ dependencyResolutionManagement {
             library("xaerolib-fabric", "xaero.lib:xaerolib-fabric-$minecraft_version:$xaerolib_version")
             library("xaerolib-forge", "xaero.lib:xaerolib-forge-$minecraft_version:$xaerolib_version")
             library("xaerolib-neo", "xaero.lib:xaerolib-neoforge-$minecraft_version:$xaerolib_version")
-            library("mixinextras-common", "io.github.llamalad7:mixinextras-common:0.5.4")
+            library("mixinextras-common", "io.github.llamalad7:mixinextras-common:0.5.5")
             library("mixinextras-forge", "io.github.llamalad7:mixinextras-forge:0.5.4")
             library("caffeine", "com.github.ben-manes.caffeine:caffeine:3.2.4")
 			library("lambdaEvents", "net.lenni0451:LambdaEvents:2.4.2")
