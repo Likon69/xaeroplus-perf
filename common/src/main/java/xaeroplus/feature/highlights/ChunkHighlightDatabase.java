@@ -23,6 +23,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
@@ -322,7 +323,7 @@ public class ChunkHighlightDatabase implements Closeable {
     }
 
     // avoids instantiating the intermediary list
-    public void getHighlightsInWindowAndOutsidePrevWindow(
+    public boolean getHighlightsInWindowAndOutsidePrevWindow(
         final ResourceKey<Level> dimension,
         final int regionXMin, final int regionXMax,
         final int regionZMin, final int regionZMax,
@@ -333,11 +334,12 @@ public class ChunkHighlightDatabase implements Closeable {
         int tryCount = 0;
         while (tryCount++ < MAX_RETRIES) {
             if (getHighlightsInWindowAndOutsidePrevWindow0(dimension, regionXMin, regionXMax, regionZMin, regionZMax, prevRegionXMin, prevRegionXMax, prevRegionZMin, prevRegionZMax, consumer)) {
-                return;
+                return true;
             }
             XaeroPlus.LOGGER.info("Retrying get of highlights from {} database in dimension: {}, (attempt {}/{})", databaseName, dimension.identifier(), tryCount, 3);
             Wait.waitMs(50);
         }
+        return false;
     }
 
     private boolean getHighlightsInWindowAndOutsidePrevWindow0(
@@ -348,27 +350,27 @@ public class ChunkHighlightDatabase implements Closeable {
         final int prevRegionZMin, final int prevRegionZMax,
         HighlightConsumer consumer
     ) {
-        int xMin = regionCoordToChunkCoord(regionXMin);
-        int xMax = regionCoordToChunkCoord(regionXMax);
-        int zMin = regionCoordToChunkCoord(regionZMin);
-        int zMax = regionCoordToChunkCoord(regionZMax);
-        int prevXMin = regionCoordToChunkCoord(prevRegionXMin);
-        int prevXMax = regionCoordToChunkCoord(prevRegionXMax);
-        int prevZMin = regionCoordToChunkCoord(prevRegionZMin);
-        int prevZMax = regionCoordToChunkCoord(prevRegionZMax);
-        try (var statement = connection.createStatement()) {
-            try (ResultSet resultSet = statement.executeQuery(
-                "SELECT x, z, foundTime FROM \"" + getTableName(dimension) + "\" " +
-                    "WHERE x BETWEEN " + xMin + " AND " + xMax + " " +
-                    "AND z BETWEEN " + zMin + " AND " + zMax + " " +
-                    "AND NOT (x BETWEEN " + prevXMin + " AND " + prevXMax + " " +
-                    "AND z BETWEEN " + prevZMin + " AND " + prevZMax + ")")) {
-                while (resultSet.next()) {
-                    consumer.accept(
-                        resultSet.getInt("x"),
-                        resultSet.getInt("z"),
-                        resultSet.getLong("foundTime")
-                    );
+        ChunkRect window = ChunkRect.ofRegionWindow(regionXMin, regionXMax, regionZMin, regionZMax);
+        ChunkRect previous = ChunkRect.ofRegionWindow(prevRegionXMin, prevRegionXMax, prevRegionZMin, prevRegionZMax);
+        try {
+            for (ChunkRect rectangle : window.minus(previous)) {
+                try (PreparedStatement statement = connection.prepareStatement(
+                    "WITH RECURSIVE xs(x) AS (SELECT ? UNION ALL SELECT x + 1 FROM xs WHERE x < ?) "
+                        + "SELECT t.x, t.z, t.foundTime FROM xs JOIN \"" + getTableName(dimension)
+                        + "\" t ON t.x = xs.x AND t.z BETWEEN ? AND ?")) {
+                    statement.setInt(1, rectangle.minX());
+                    statement.setInt(2, rectangle.maxX());
+                    statement.setInt(3, rectangle.minZ());
+                    statement.setInt(4, rectangle.maxZ());
+                    try (ResultSet resultSet = statement.executeQuery()) {
+                        while (resultSet.next()) {
+                            consumer.accept(
+                                resultSet.getInt("x"),
+                                resultSet.getInt("z"),
+                                resultSet.getLong("foundTime")
+                            );
+                        }
+                    }
                 }
             }
         } catch (SQLException e) {

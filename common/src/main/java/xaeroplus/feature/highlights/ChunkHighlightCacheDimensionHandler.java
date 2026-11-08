@@ -97,14 +97,16 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
     private Long2LongMap loadUpdatedWindowFromDatabase(final int windowRegionX, final int windowRegionZ, final int windowRegionSize, final int prevWindowRegionX, final int prevWindowRegionZ, final int prevWindowRegionSize) {
         // load new data
         Long2LongMap dataBuf = new Long2LongOpenHashMap(64);
-        database.getHighlightsInWindowAndOutsidePrevWindow(
+        if (!database.getHighlightsInWindowAndOutsidePrevWindow(
             dimension,
             windowRegionX - windowRegionSize, windowRegionX + windowRegionSize,
             windowRegionZ - windowRegionSize, windowRegionZ + windowRegionSize,
             prevWindowRegionX - prevWindowRegionSize, prevWindowRegionX + prevWindowRegionSize,
             prevWindowRegionZ - prevWindowRegionSize, prevWindowRegionZ + prevWindowRegionSize,
             (chunkX, chunkZ, foundTime) -> dataBuf.put(chunkPosToLong(chunkX, chunkZ), foundTime)
-        );
+        )) {
+            throw new IllegalStateException("Failed loading highlights window");
+        }
         return dataBuf;
     }
 
@@ -323,6 +325,9 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
 
         @Override
         public void onFailure(Throwable t) {
+            windowRegionX = 0;
+            windowRegionZ = 0;
+            windowRegionSize = 0;
             XaeroPlus.LOGGER.error("Error while moving window for {} disk cache dimension: {}",
                                    database.databaseName,
                                    dimension.identifier(),
