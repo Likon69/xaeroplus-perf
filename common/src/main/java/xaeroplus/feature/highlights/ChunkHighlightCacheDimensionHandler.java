@@ -18,8 +18,12 @@ import static xaeroplus.util.ChunkUtils.chunkPosToLong;
 import static xaeroplus.util.ChunkUtils.regionCoordToChunkCoord;
 
 public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCacheHandler {
+    private static final long EVICTION_DELAY_MS = 5000;
+    private static final int EVICTION_GROWTH_FACTOR = 2;
     private final String name;
     private final ChunkBounds retained = new ChunkBounds();
+    private long lastEvictionMs;
+    private int sizeAfterEviction;
     @NotNull private final ResourceKey<Level> dimension;
     private int windowRegionX = 0;
     private int windowRegionZ = 0;
@@ -75,6 +79,14 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
             } catch (final Exception e) {
                 XaeroPlus.LOGGER.error("Failed submitting move window task for {} disk cache dimension: {}", database.databaseName, dimension.identifier(), e);
             }
+        } else if (windowMoveFuture.isDone() && System.currentTimeMillis() - lastEvictionMs >= EVICTION_DELAY_MS) {
+            var chunkXMin = regionCoordToChunkCoord(windowRegionX - windowRegionSize);
+            var chunkXMax = regionCoordToChunkCoord(windowRegionX + windowRegionSize);
+            var chunkZMin = regionCoordToChunkCoord(windowRegionZ - windowRegionSize);
+            var chunkZMax = regionCoordToChunkCoord(windowRegionZ + windowRegionSize);
+            if (!retained.isWithin(chunkXMin, chunkXMax, chunkZMin, chunkZMax)) {
+                windowMoveFuture = flushChunksOutsideWindow(windowRegionX, windowRegionZ, windowRegionSize, false);
+            }
         }
     }
 
@@ -89,7 +101,8 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
         // must collect what to delete before flushOutsideWindowFuture
         // so that we can double check that chunks map doesn't contain any staleToRemove chunks
         var flushToDeleteChunksFuture = flushStaleToRemoveChunks();
-        var flushOutsideWindowFuture = flushChunksOutsideWindow(windowRegionX, windowRegionZ, windowRegionSize);
+        boolean deferrable = windowRegionSize == prevWindowRegionSize && windowRegionSize != 0;
+        var flushOutsideWindowFuture = flushChunksOutsideWindow(windowRegionX, windowRegionZ, windowRegionSize, deferrable);
         return Futures.allAsList(loadDataFuture, flushToDeleteChunksFuture, flushOutsideWindowFuture);
     }
 
@@ -110,7 +123,7 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
         return dataBuf;
     }
 
-    private ListenableFuture<?> flushChunksOutsideWindow(final int windowRegionX, final int windowRegionZ, final int windowRegionSize) {
+    private ListenableFuture<?> flushChunksOutsideWindow(final int windowRegionX, final int windowRegionZ, final int windowRegionSize, final boolean deferrable) {
         if (!mc.isSameThread()) {
             throw new RuntimeException("removeChunksOutsideWindow must be called on the main thread");
         }
@@ -121,6 +134,11 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
         var chunkZMin = regionCoordToChunkCoord(windowRegionZ - windowRegionSize);
         var chunkZMax = regionCoordToChunkCoord(windowRegionZ + windowRegionSize);
         if (retained.isWithin(chunkXMin, chunkXMax, chunkZMin, chunkZMax)) return Futures.immediateVoidFuture();
+        if (deferrable
+            && System.currentTimeMillis() - lastEvictionMs < EVICTION_DELAY_MS
+            && chunks.size() <= EVICTION_GROWTH_FACTOR * Math.max(defaultCapacity, sizeAfterEviction)) {
+            return Futures.immediateVoidFuture();
+        }
         // critical section in mc client tick thread
         // it would have huge benefits if we could optimize this
         // there is no cap on the size of the chunks map
@@ -144,6 +162,8 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
         retained.set(chunkXMin, chunkXMax, chunkZMin, chunkZMax);
         if (changed) markChanged();
         chunks.trim(Math.max(defaultCapacity, chunks.size()));
+        lastEvictionMs = System.currentTimeMillis();
+        sizeAfterEviction = chunks.size();
         if (dataBuf.isEmpty()) return Futures.immediateVoidFuture();
         return dbExecutor.submit(() -> database.insertHighlightList(dataBuf, dimension));
     }
