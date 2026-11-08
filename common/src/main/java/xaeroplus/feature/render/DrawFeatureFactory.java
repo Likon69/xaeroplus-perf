@@ -92,7 +92,7 @@ public interface DrawFeatureFactory {
     ) {
         return new RevisionChunkHighlightDrawFeature(
             id,
-            new HighlightVertexBuffer(),
+            new TiledHighlightVertexBuffer(),
             supplier,
             revisionFunction,
             colorSupplier,
