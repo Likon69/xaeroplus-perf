@@ -4,7 +4,6 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import it.unimi.dsi.fastutil.longs.*;
-import it.unimi.dsi.fastutil.objects.ObjectIterator;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.Level;
 import org.jetbrains.annotations.NotNull;
@@ -25,9 +24,8 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
     private final ChunkBounds retained = new ChunkBounds();
     private ChunkRect loaded = ChunkRect.EMPTY;
     private long retentionStartMs;
-    private final ArrayDeque<Long2LongMap> pendingLoads = new ArrayDeque<>();
+    private final ArrayDeque<PendingHighlightLoad> pendingLoads = new ArrayDeque<>();
     private final LongOpenHashSet suppressedKeys = new LongOpenHashSet();
-    private ObjectIterator<Long2LongMap.Entry> pendingLoadIterator;
     @NotNull private final ResourceKey<Level> dimension;
     private int windowRegionX = 0;
     private int windowRegionZ = 0;
@@ -127,13 +125,13 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
     }
 
 
-    private Long2LongMap loadUpdatedWindowFromDatabase(final ChunkRect window, final ChunkRect previous) {
+    private PendingHighlightLoad loadUpdatedWindowFromDatabase(final ChunkRect window, final ChunkRect previous) {
         // load new data
-        Long2LongMap dataBuf = new Long2LongOpenHashMap(64);
+        PendingHighlightLoad dataBuf = new PendingHighlightLoad();
         if (!database.getHighlightsInWindowAndOutsidePrevWindow(
             dimension,
             window, previous,
-            (chunkX, chunkZ, foundTime) -> dataBuf.put(chunkPosToLong(chunkX, chunkZ), foundTime)
+            (chunkX, chunkZ, foundTime) -> dataBuf.add(chunkPosToLong(chunkX, chunkZ), foundTime)
         )) {
             throw new IllegalStateException("Failed loading highlights window");
         }
@@ -329,18 +327,15 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
         long budget = HighlightTickBudget.remainingNanos();
         try {
             while (!pendingLoads.isEmpty() && System.nanoTime() - started < budget) {
-                if (pendingLoadIterator == null) {
-                    pendingLoadIterator = Long2LongMaps.fastIterator(pendingLoads.peekFirst());
-                }
-                if (!pendingLoadIterator.hasNext()) {
+                var load = pendingLoads.peekFirst();
+                if (!load.hasNext()) {
                     pendingLoads.removeFirst();
-                    pendingLoadIterator = null;
                     continue;
                 }
-                var entry = pendingLoadIterator.next();
-                long pos = entry.getLongKey();
+                long pos = load.nextKey();
+                long foundTime = load.nextValue();
                 if (suppressedKeys.contains(pos)) continue;
-                putChunk(pos, entry.getLongValue());
+                putChunk(pos, foundTime);
                 retained.include(ChunkUtils.longToChunkX(pos), ChunkUtils.longToChunkZ(pos));
             }
         } finally {
