@@ -1,6 +1,5 @@
 package xaeroplus.feature.highlights;
 
-import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
@@ -20,13 +19,14 @@ import static xaeroplus.util.ChunkUtils.chunkPosToLong;
 import static xaeroplus.util.ChunkUtils.regionCoordToChunkCoord;
 
 public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCacheHandler {
-    private static final long EVICTION_DELAY_MS = 5000;
-    private static final int EVICTION_GROWTH_FACTOR = 2;
+    private static final long EVICTION_DELAY_MS = 30000;
+    private static final int MAX_RETAINED_CHUNKS = 6_000_000;
     private final String name;
     private final ChunkBounds retained = new ChunkBounds();
-    private long lastEvictionMs;
-    private int sizeAfterEviction;
+    private ChunkRect loaded = ChunkRect.EMPTY;
+    private long retentionStartMs;
     private final ArrayDeque<Long2LongMap> pendingLoads = new ArrayDeque<>();
+    private final LongOpenHashSet suppressedKeys = new LongOpenHashSet();
     private ObjectIterator<Long2LongMap.Entry> pendingLoadIterator;
     @NotNull private final ResourceKey<Level> dimension;
     private int windowRegionX = 0;
@@ -65,25 +65,22 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
         }
         boolean windowChanged = regionX != windowRegionX || regionZ != windowRegionZ || regionSize != windowRegionSize;
         if (windowChanged
-            && !windowMoveFuture.isDone()
+            && (!windowMoveFuture.isDone() || !pendingLoads.isEmpty())
             && (regionX != 0 || regionZ != 0 || regionSize != 0) // queue window change if we are clearing it (setting size to 0)
         ) {
             XaeroPlus.LOGGER.debug("Rejecting window move to: [{} {} {}] from: [{} {} {}]", regionX, regionZ, regionSize, windowRegionX, windowRegionZ, windowRegionSize);
             return;
         }
-        int prevWindowRegionX = windowRegionX;
-        int prevWindowRegionZ = windowRegionZ;
-        int prevWindowRegionSize = windowRegionSize;
         this.windowRegionX = regionX;
         this.windowRegionZ = regionZ;
         this.windowRegionSize = regionSize;
         if (windowChanged) {
             try {
-                windowMoveFuture = moveWindow0(regionX, regionZ, regionSize, prevWindowRegionX, prevWindowRegionZ, prevWindowRegionSize);
+                windowMoveFuture = moveWindow0(regionX, regionZ, regionSize);
             } catch (final Exception e) {
                 XaeroPlus.LOGGER.error("Failed submitting move window task for {} disk cache dimension: {}", database.databaseName, dimension.identifier(), e);
             }
-        } else if (windowMoveFuture.isDone() && System.currentTimeMillis() - lastEvictionMs >= EVICTION_DELAY_MS) {
+        } else if (windowMoveFuture.isDone() && System.currentTimeMillis() - retentionStartMs >= EVICTION_DELAY_MS) {
             var chunkXMin = regionCoordToChunkCoord(windowRegionX - windowRegionSize);
             var chunkXMax = regionCoordToChunkCoord(windowRegionX + windowRegionSize);
             var chunkZMin = regionCoordToChunkCoord(windowRegionZ - windowRegionSize);
@@ -94,32 +91,48 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
         }
     }
 
-    private ListenableFuture<?> moveWindow0(final int windowRegionX, final int windowRegionZ, final int windowRegionSize, final int prevWindowRegionX, final int prevWindowRegionZ, final int prevWindowRegionSize) {
-        var loadDataFuture = dbExecutor.submit(() -> loadUpdatedWindowFromDatabase(windowRegionX, windowRegionZ, windowRegionSize, prevWindowRegionX, prevWindowRegionZ, prevWindowRegionSize));
-        Futures.addCallback(loadDataFuture, new WindowDataLoadFutureCallback(
-            regionCoordToChunkCoord(windowRegionX - windowRegionSize),
-            regionCoordToChunkCoord(windowRegionX + windowRegionSize),
-            regionCoordToChunkCoord(windowRegionZ - windowRegionSize),
-            regionCoordToChunkCoord(windowRegionZ + windowRegionSize)
-        ), mc);
+    private ListenableFuture<?> moveWindow0(final int windowRegionX, final int windowRegionZ, final int windowRegionSize) {
+        ChunkRect window = ChunkRect.ofRegionWindow(
+            windowRegionX - windowRegionSize, windowRegionX + windowRegionSize,
+            windowRegionZ - windowRegionSize, windowRegionZ + windowRegionSize
+        );
+        ChunkRect previous = loaded;
         // must collect what to delete before flushOutsideWindowFuture
         // so that we can double check that chunks map doesn't contain any staleToRemove chunks
         var flushToDeleteChunksFuture = flushStaleToRemoveChunks();
-        boolean deferrable = windowRegionSize == prevWindowRegionSize && windowRegionSize != 0;
+        var loadDataFuture = dbExecutor.submit(() -> loadUpdatedWindowFromDatabase(window, previous));
+        loaded = loaded.contains(window) ? loaded : window;
+        if (!window.minus(previous).isEmpty()) retentionStartMs = System.currentTimeMillis();
+        var publishedDataFuture = Futures.transform(loadDataFuture, dataBuf -> {
+            if (!dataBuf.isEmpty()) {
+                retained.include(window.minX(), window.maxX(), window.minZ(), window.maxZ());
+                pendingLoads.addLast(dataBuf);
+            }
+            return null;
+        }, mc);
+        var handledDataFuture = Futures.catching(publishedDataFuture, Throwable.class, t -> {
+            this.windowRegionX = 0;
+            this.windowRegionZ = 0;
+            this.windowRegionSize = 0;
+            loaded = ChunkRect.EMPTY;
+            XaeroPlus.LOGGER.error("Error while moving window for {} disk cache dimension: {}",
+                                   database.databaseName,
+                                   dimension.identifier(),
+                                   t);
+            return null;
+        }, mc);
+        boolean deferrable = windowRegionSize != 0;
         var flushOutsideWindowFuture = flushChunksOutsideWindow(windowRegionX, windowRegionZ, windowRegionSize, deferrable);
-        return Futures.allAsList(loadDataFuture, flushToDeleteChunksFuture, flushOutsideWindowFuture);
+        return Futures.allAsList(handledDataFuture, flushToDeleteChunksFuture, flushOutsideWindowFuture);
     }
 
 
-    private Long2LongMap loadUpdatedWindowFromDatabase(final int windowRegionX, final int windowRegionZ, final int windowRegionSize, final int prevWindowRegionX, final int prevWindowRegionZ, final int prevWindowRegionSize) {
+    private Long2LongMap loadUpdatedWindowFromDatabase(final ChunkRect window, final ChunkRect previous) {
         // load new data
         Long2LongMap dataBuf = new Long2LongOpenHashMap(64);
         if (!database.getHighlightsInWindowAndOutsidePrevWindow(
             dimension,
-            windowRegionX - windowRegionSize, windowRegionX + windowRegionSize,
-            windowRegionZ - windowRegionSize, windowRegionZ + windowRegionSize,
-            prevWindowRegionX - prevWindowRegionSize, prevWindowRegionX + prevWindowRegionSize,
-            prevWindowRegionZ - prevWindowRegionSize, prevWindowRegionZ + prevWindowRegionSize,
+            window, previous,
             (chunkX, chunkZ, foundTime) -> dataBuf.put(chunkPosToLong(chunkX, chunkZ), foundTime)
         )) {
             throw new IllegalStateException("Failed loading highlights window");
@@ -139,8 +152,8 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
         var chunkZMax = regionCoordToChunkCoord(windowRegionZ + windowRegionSize);
         if (retained.isWithin(chunkXMin, chunkXMax, chunkZMin, chunkZMax)) return Futures.immediateVoidFuture();
         if (deferrable
-            && System.currentTimeMillis() - lastEvictionMs < EVICTION_DELAY_MS
-            && chunks.size() <= EVICTION_GROWTH_FACTOR * Math.max(defaultCapacity, sizeAfterEviction)) {
+            && System.currentTimeMillis() - retentionStartMs < EVICTION_DELAY_MS
+            && chunks.size() <= MAX_RETAINED_CHUNKS) {
             return Futures.immediateVoidFuture();
         }
         // critical section in mc client tick thread
@@ -153,8 +166,8 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
         });
         chunks.trim(Math.max(defaultCapacity, chunks.size()));
         retained.set(chunkXMin, chunkXMax, chunkZMin, chunkZMax);
-        lastEvictionMs = System.currentTimeMillis();
-        sizeAfterEviction = chunks.size();
+        loaded = loaded.intersect(new ChunkRect(chunkXMin, chunkXMax, chunkZMin, chunkZMax));
+        retentionStartMs = System.currentTimeMillis();
         if (dataBuf.isEmpty()) return Futures.immediateVoidFuture();
         return dbExecutor.submit(() -> database.insertHighlightList(dataBuf, dimension));
     }
@@ -231,6 +244,7 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
         var pos = chunkPosToLong(x, z);
         staleChunks.add(pos);
         staleToRemoveChunks.remove(pos);
+        suppressedKeys.remove(pos);
     }
 
     @Override
@@ -257,6 +271,7 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
         var pos = chunkPosToLong(x, z);
         super.removeHighlight(x, z);
         staleToRemoveChunks.add(pos);
+        if (!pendingLoads.isEmpty() || !windowMoveFuture.isDone()) suppressedKeys.add(pos);
     }
 
     @Override
@@ -266,6 +281,7 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
         }
         super.removeHighlights(toRemove);
         staleToRemoveChunks.addAll(toRemove);
+        if (!pendingLoads.isEmpty() || !windowMoveFuture.isDone()) suppressedKeys.addAll(toRemove);
     }
 
     @Override
@@ -307,6 +323,7 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
         if (!mc.isSameThread()) {
             throw new IllegalStateException("integratePendingLoads must be called on the main thread");
         }
+        clearSuppressedKeys();
         if (pendingLoads.isEmpty() || HighlightTickBudget.remainingNanos() <= 0) return;
         long started = System.nanoTime();
         long budget = HighlightTickBudget.remainingNanos();
@@ -322,12 +339,14 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
                 }
                 var entry = pendingLoadIterator.next();
                 long pos = entry.getLongKey();
+                if (suppressedKeys.contains(pos)) continue;
                 putChunk(pos, entry.getLongValue());
                 retained.include(ChunkUtils.longToChunkX(pos), ChunkUtils.longToChunkZ(pos));
             }
         } finally {
             HighlightTickBudget.consume(System.nanoTime() - started);
         }
+        clearSuppressedKeys();
     }
 
     @Override
@@ -336,39 +355,10 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
     @Override
     public void onDisable() {}
 
-    private final class WindowDataLoadFutureCallback implements FutureCallback<Long2LongMap> {
-        private final int minX;
-        private final int maxX;
-        private final int minZ;
-        private final int maxZ;
-
-        private WindowDataLoadFutureCallback(int minX, int maxX, int minZ, int maxZ) {
-            this.minX = minX;
-            this.maxX = maxX;
-            this.minZ = minZ;
-            this.maxZ = maxZ;
-        }
-
-        @Override
-        public void onSuccess(Long2LongMap dataBuf) {
-            if (!mc.isSameThread()) {
-                XaeroPlus.LOGGER.error("WindowDataLoadFutureCallback must be called on the main thread");
-            }
-            if (dataBuf.isEmpty()) return;
-            // write new data to local cache
-            retained.include(minX, maxX, minZ, maxZ);
-            pendingLoads.addLast(dataBuf);
-        }
-
-        @Override
-        public void onFailure(Throwable t) {
-            windowRegionX = 0;
-            windowRegionZ = 0;
-            windowRegionSize = 0;
-            XaeroPlus.LOGGER.error("Error while moving window for {} disk cache dimension: {}",
-                                   database.databaseName,
-                                   dimension.identifier(),
-                                   t);
+    private void clearSuppressedKeys() {
+        if (!suppressedKeys.isEmpty() && pendingLoads.isEmpty() && windowMoveFuture.isDone()) {
+            suppressedKeys.clear();
+            suppressedKeys.trim(defaultCapacity);
         }
     }
 }

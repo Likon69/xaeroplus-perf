@@ -325,15 +325,12 @@ public class ChunkHighlightDatabase implements Closeable {
     // avoids instantiating the intermediary list
     public boolean getHighlightsInWindowAndOutsidePrevWindow(
         final ResourceKey<Level> dimension,
-        final int regionXMin, final int regionXMax,
-        final int regionZMin, final int regionZMax,
-        final int prevRegionXMin, final int prevRegionXMax,
-        final int prevRegionZMin, final int prevRegionZMax,
+        final ChunkRect window, final ChunkRect loaded,
         HighlightConsumer consumer
     ) {
         int tryCount = 0;
         while (tryCount++ < MAX_RETRIES) {
-            if (getHighlightsInWindowAndOutsidePrevWindow0(dimension, regionXMin, regionXMax, regionZMin, regionZMax, prevRegionXMin, prevRegionXMax, prevRegionZMin, prevRegionZMax, consumer)) {
+            if (getHighlightsInWindowAndOutsidePrevWindow0(dimension, window, loaded, consumer)) {
                 return true;
             }
             XaeroPlus.LOGGER.info("Retrying get of highlights from {} database in dimension: {}, (attempt {}/{})", databaseName, dimension.identifier(), tryCount, 3);
@@ -344,16 +341,11 @@ public class ChunkHighlightDatabase implements Closeable {
 
     private boolean getHighlightsInWindowAndOutsidePrevWindow0(
         final ResourceKey<Level> dimension,
-        final int regionXMin, final int regionXMax,
-        final int regionZMin, final int regionZMax,
-        final int prevRegionXMin, final int prevRegionXMax,
-        final int prevRegionZMin, final int prevRegionZMax,
+        final ChunkRect window, final ChunkRect loaded,
         HighlightConsumer consumer
     ) {
-        ChunkRect window = ChunkRect.ofRegionWindow(regionXMin, regionXMax, regionZMin, regionZMax);
-        ChunkRect previous = ChunkRect.ofRegionWindow(prevRegionXMin, prevRegionXMax, prevRegionZMin, prevRegionZMax);
         try {
-            for (ChunkRect rectangle : window.minus(previous)) {
+            for (ChunkRect rectangle : window.minus(loaded)) {
                 try (PreparedStatement statement = connection.prepareStatement(
                     "WITH RECURSIVE xs(x) AS (SELECT ? UNION ALL SELECT x + 1 FROM xs WHERE x < ?) "
                         + "SELECT t.x, t.z, t.foundTime FROM xs JOIN \"" + getTableName(dimension)
@@ -374,7 +366,7 @@ public class ChunkHighlightDatabase implements Closeable {
                 }
             }
         } catch (SQLException e) {
-            XaeroPlus.LOGGER.error("Error getting chunks from {} database in dimension: {}, window: {}-{}, {}-{}", databaseName, dimension.identifier(), regionXMin, regionXMax, regionZMin, regionZMax, e);
+            XaeroPlus.LOGGER.error("Error getting chunks from {} database in dimension: {}, window: {}-{}, {}-{}", databaseName, dimension.identifier(), window.minX() >> 5, window.maxX() >> 5, window.minZ() >> 5, window.maxZ() >> 5, e);
             if (e.getErrorCode() == SQLiteErrorCode.SQLITE_CORRUPT.code) {
                 XaeroPlus.LOGGER.error("Corruption detected in {} database", databaseName, e);
                 recoverCorruptDatabase();

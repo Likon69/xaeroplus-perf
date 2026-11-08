@@ -1,7 +1,7 @@
 package xaeroplus.feature.highlights;
 
 public final class HighlightTickBudget {
-    private static final long BUDGET_NS = 3_000_000;
+    private static final long BUDGET_NS = 6_000_000;
     private static long remainingNs;
 
     private HighlightTickBudget() {}
