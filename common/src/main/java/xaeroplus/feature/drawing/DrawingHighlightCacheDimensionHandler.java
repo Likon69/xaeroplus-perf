@@ -109,23 +109,10 @@ public class DrawingHighlightCacheDimensionHandler extends ChunkHighlightBaseCac
         // it would have huge benefits if we could optimize this
         // there is no cap on the size of the chunks map
         // so this can require iterating through millions of entries
-        boolean changed = false;
-        for (var it = chunks.keySet().longIterator(); it.hasNext(); ) {
-            var chunkPos = it.nextLong();
-            final int chunkX = ChunkUtils.longToChunkX(chunkPos);
-            final int chunkZ = ChunkUtils.longToChunkZ(chunkPos);
-            if (chunkX < chunkXMin
-                || chunkX > chunkXMax
-                || chunkZ < chunkZMin
-                || chunkZ > chunkZMax) {
-                if (staleChunks.contains(chunkPos)) {
-                    dataBuf.put(chunkPos, chunks.get(chunkPos));
-                }
-                it.remove();
-                changed = true;
-            }
-        }
-        if (changed) markChanged();
+        index.evictOutside(chunkXMin, chunkXMax, chunkZMin, chunkZMax, pos -> {
+            if (staleChunks.contains(pos)) dataBuf.put(pos, chunks.get(pos));
+            removeChunk(pos, false);
+        });
         chunks.trim(64);
         return dbExecutor.submit(() -> database.insertHighlightList(dataBuf, dimension));
     }
@@ -215,11 +202,7 @@ public class DrawingHighlightCacheDimensionHandler extends ChunkHighlightBaseCac
         }
         staleChunks.clear();
         staleChunks.trim(64);
-        if (!chunks.isEmpty()) {
-            chunks.clear();
-            markChanged();
-        }
-        chunks.trim(64);
+        clearChunks();
         dbExecutor.execute(() -> database.removeAllHighlights(dimension));
     }
 
@@ -272,8 +255,10 @@ public class DrawingHighlightCacheDimensionHandler extends ChunkHighlightBaseCac
             }
             if (dataBuf.isEmpty()) return;
             // write new data to local cache
-            chunks.putAll(dataBuf);
-            markChanged();
+            for (var it = Long2LongMaps.fastIterator(dataBuf); it.hasNext(); ) {
+                var entry = it.next();
+                putChunk(entry.getLongKey(), entry.getLongValue());
+            }
         }
 
         @Override

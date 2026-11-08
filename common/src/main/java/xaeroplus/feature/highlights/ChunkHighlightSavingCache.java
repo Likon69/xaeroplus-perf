@@ -168,11 +168,11 @@ public class ChunkHighlightSavingCache implements ChunkHighlightCache, Closeable
     }
 
     @Override
-    public long revision(final ResourceKey<Level> dimensionId) {
-        if (dimensionId == null) return 0;
+    public HighlightTileIndex tileIndex(final ResourceKey<Level> dimensionId) {
+        if (dimensionId == null) return HighlightTileIndex.EMPTY;
         ChunkHighlightCacheDimensionHandler cacheForDimension = getCacheForDimension(dimensionId, false);
-        if (cacheForDimension == null) return 0;
-        return cacheForDimension.revision(dimensionId);
+        if (cacheForDimension == null) return HighlightTileIndex.EMPTY;
+        return cacheForDimension.tileIndex(dimensionId);
     }
 
     @Override
@@ -465,6 +465,7 @@ public class ChunkHighlightSavingCache implements ChunkHighlightCache, Closeable
             throw new RuntimeException("handleTick must be called on the main thread");
         }
         if (!cacheReady.get()) return;
+        for (var cache : dimensionCacheMap.values()) cache.integratePendingLoads();
         if (XaeroWorldMapCore.currentSession == null) return;
         // reduce likelihood of all caches updating at the same time
         // changing the window involves iterating through every chunk in the cache to find which are now outside the window

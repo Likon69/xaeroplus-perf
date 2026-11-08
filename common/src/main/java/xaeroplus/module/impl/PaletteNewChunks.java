@@ -18,6 +18,7 @@ import net.minecraft.world.level.chunk.*;
 import xaeroplus.Globals;
 import xaeroplus.XaeroPlus;
 import xaeroplus.event.ChunkDataEvent;
+import xaeroplus.feature.highlights.HighlightTileIndex;
 import xaeroplus.feature.highlights.SavableHighlightCacheInstance;
 import xaeroplus.feature.render.DrawFeatureFactory;
 import xaeroplus.module.Module;
@@ -248,7 +249,7 @@ public class PaletteNewChunks extends Module {
             DrawFeatureFactory.chunkHighlights(
                 "PaletteNewChunks",
                 this::getHighlightsState,
-                this::getHighlightsRevision,
+                this::getHighlightsIndex,
                 this::getNewChunksColor,
                 250
             )
@@ -300,10 +301,10 @@ public class PaletteNewChunks extends Module {
             : newChunksCache.get().getCacheMap(dimension);
     }
 
-    public long getHighlightsRevision(final ResourceKey<Level> dimension) {
+    public HighlightTileIndex getHighlightsIndex(final ResourceKey<Level> dimension) {
         return renderInverse
-            ? newChunksInverseCache.get().revision(dimension)
-            : newChunksCache.get().revision(dimension);
+            ? newChunksInverseCache.get().tileIndex(dimension)
+            : newChunksCache.get().tileIndex(dimension);
     }
 
     public boolean isNewChunk(final int chunkPosX, final int chunkPosZ, final ResourceKey<Level> dimensionId) {

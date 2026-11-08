@@ -7,6 +7,7 @@ import xaero.common.HudMod;
 import xaero.lib.client.graphics.XaeroBufferProvider;
 import xaeroplus.XaeroPlus;
 import xaeroplus.event.XaeroWorldChangeEvent;
+import xaeroplus.feature.render.highlight.HighlightRenderBudget;
 import xaeroplus.module.impl.TickTaskExecutor;
 
 public class DrawManager {
@@ -38,6 +39,7 @@ public class DrawManager {
         final PoseStack matrixStack,
         final XaeroBufferProvider renderTypeBuffers
     ) {
+        HighlightRenderBudget.beginFrame();
         if (HudMod.INSTANCE.isFairPlay()) return;
         var cameraBlockX = chunkX * 64 + tileX * 16 + insideX;
         var cameraBlockZ = chunkZ * 64 + tileZ * 16 + insideZ;
@@ -64,6 +66,7 @@ public class DrawManager {
         final PoseStack matrixStack,
         final double fboScale,
         final XaeroBufferProvider renderTypeBuffers) {
+        HighlightRenderBudget.beginFrame();
         if (HudMod.INSTANCE.isFairPlay()) return;
         var untranslatedMapViewMatrix = new Matrix4f(matrixStack.last().pose()).translate(0.0f, 0.0f, 1.0f);
         var ctx = new DrawContext(

@@ -18,6 +18,7 @@ import xaeroplus.Globals;
 import xaeroplus.event.ChunkBlockUpdateEvent;
 import xaeroplus.event.ChunkBlocksUpdateEvent;
 import xaeroplus.event.ChunkDataEvent;
+import xaeroplus.feature.highlights.HighlightTileIndex;
 import xaeroplus.feature.highlights.SavableHighlightCacheInstance;
 import xaeroplus.feature.render.DrawFeatureFactory;
 import xaeroplus.module.Module;
@@ -48,7 +49,7 @@ public class Portals extends Module {
             DrawFeatureFactory.chunkHighlights(
                 "Portals",
                 this::getHighlightsState,
-                this::getHighlightsRevision,
+                this::getHighlightsIndex,
                 this::getPortalsColor,
                 250
             )
@@ -171,7 +172,7 @@ public class Portals extends Module {
         return portalsCache.get().getCacheMap(dimension);
     }
 
-    public long getHighlightsRevision(final ResourceKey<Level> dimension) {
-        return portalsCache.get().revision(dimension);
+    public HighlightTileIndex getHighlightsIndex(final ResourceKey<Level> dimension) {
+        return portalsCache.get().tileIndex(dimension);
     }
 }

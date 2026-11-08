@@ -16,6 +16,7 @@ import net.minecraft.world.level.chunk.EmptyLevelChunk;
 import net.minecraft.world.level.chunk.LevelChunk;
 import xaeroplus.Globals;
 import xaeroplus.event.ChunkDataEvent;
+import xaeroplus.feature.highlights.HighlightTileIndex;
 import xaeroplus.feature.highlights.SavableHighlightCacheInstance;
 import xaeroplus.feature.render.DrawFeatureFactory;
 import xaeroplus.module.Module;
@@ -104,7 +105,7 @@ public class OldChunks extends Module {
             DrawFeatureFactory.chunkHighlights(
                 "OldChunks",
                 this::getHighlightsState,
-                this::getHighlightsRevision,
+                this::getHighlightsIndex,
                 this::getOldChunksColor,
                 250
             )
@@ -161,10 +162,10 @@ public class OldChunks extends Module {
             : oldChunksCache.get().getCacheMap(dimension);
     }
 
-    public long getHighlightsRevision(final ResourceKey<Level> dimension) {
+    public HighlightTileIndex getHighlightsIndex(final ResourceKey<Level> dimension) {
         return inverse
-            ? modernChunksCache.get().revision(dimension)
-            : oldChunksCache.get().revision(dimension);
+            ? modernChunksCache.get().tileIndex(dimension)
+            : oldChunksCache.get().tileIndex(dimension);
     }
 
     public boolean isOldChunk(final int chunkPosX, final int chunkPosZ, final ResourceKey<Level> dimensionId) {

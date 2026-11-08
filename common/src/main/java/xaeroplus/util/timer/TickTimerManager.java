@@ -3,6 +3,7 @@ package xaeroplus.util.timer;
 import net.lenni0451.lambdaevents.EventHandler;
 import xaeroplus.XaeroPlus;
 import xaeroplus.event.ClientTickEvent;
+import xaeroplus.feature.highlights.HighlightTickBudget;
 
 public final class TickTimerManager {
     // before any modules
@@ -21,6 +22,7 @@ public final class TickTimerManager {
 
     @EventHandler(priority = TICK_PRIORITY)
     public void onClientTick(ClientTickEvent.Pre event) {
+        HighlightTickBudget.beginTick();
         tickTime++;
     }
 }

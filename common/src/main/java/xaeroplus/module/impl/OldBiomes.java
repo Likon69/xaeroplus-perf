@@ -17,6 +17,7 @@ import net.minecraft.world.level.chunk.PalettedContainer;
 import xaeroplus.Globals;
 import xaeroplus.XaeroPlus;
 import xaeroplus.event.ChunkDataEvent;
+import xaeroplus.feature.highlights.HighlightTileIndex;
 import xaeroplus.feature.highlights.SavableHighlightCacheInstance;
 import xaeroplus.feature.render.DrawFeatureFactory;
 import xaeroplus.module.Module;
@@ -42,7 +43,7 @@ public class OldBiomes extends Module {
             DrawFeatureFactory.chunkHighlights(
                 "OldBiomes",
                 this::getHighlightsState,
-                this::getHighlightsRevision,
+                this::getHighlightsIndex,
                 this::getOldBiomesColor,
                 250
             )
@@ -142,8 +143,8 @@ public class OldBiomes extends Module {
         return oldBiomesCache.get().getCacheMap(dimension);
     }
 
-    public long getHighlightsRevision(final ResourceKey<Level> dimension) {
-        return oldBiomesCache.get().revision(dimension);
+    public HighlightTileIndex getHighlightsIndex(final ResourceKey<Level> dimension) {
+        return oldBiomesCache.get().tileIndex(dimension);
     }
 
     public void setDiskCache(final boolean b) {

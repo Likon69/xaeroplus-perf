@@ -13,7 +13,7 @@ public abstract class ChunkHighlightBaseCacheHandler implements ChunkHighlightCa
     public int defaultCapacity = 1024;
     public final Long2LongOpenHashMap chunks = new Long2LongOpenHashMap(defaultCapacity);
     public Minecraft mc = Minecraft.getInstance();
-    private long revision;
+    protected final HighlightTileIndex index = new HighlightTileIndex();
 
     public ChunkHighlightBaseCacheHandler() {
         this.chunks.defaultReturnValue(-1);
@@ -34,10 +34,7 @@ public abstract class ChunkHighlightBaseCacheHandler implements ChunkHighlightCa
         if (!mc.isSameThread()) {
             throw new RuntimeException("addHighlight must be called on the main thread!");
         }
-        long pos = chunkPosToLong(x, z);
-        boolean added = !chunks.containsKey(pos);
-        chunks.put(pos, foundTime);
-        if (added) markChanged();
+        putChunk(chunkPosToLong(x, z), foundTime);
     }
 
     @Override
@@ -50,7 +47,7 @@ public abstract class ChunkHighlightBaseCacheHandler implements ChunkHighlightCa
         if (!mc.isSameThread()) {
             throw new RuntimeException("removeHighlight must be called on the main thread!");
         }
-        if (chunks.keySet().remove(chunkPosToLong(x, z))) markChanged();
+        removeChunk(chunkPosToLong(x, z));
     }
 
     @Override
@@ -63,9 +60,7 @@ public abstract class ChunkHighlightBaseCacheHandler implements ChunkHighlightCa
         if (!mc.isSameThread()) {
             throw new RuntimeException("removeHighlights must be called on the main thread!");
         }
-        int previousSize = chunks.size();
-        toRemove.forEach(this.chunks::remove);
-        if (chunks.size() != previousSize) markChanged();
+        toRemove.forEach(this::removeChunk);
     }
 
     @Override
@@ -84,12 +79,28 @@ public abstract class ChunkHighlightBaseCacheHandler implements ChunkHighlightCa
     }
 
     @Override
-    public long revision(final ResourceKey<Level> dimensionId) {
-        return revision;
+    public HighlightTileIndex tileIndex(final ResourceKey<Level> dimensionId) {
+        return index;
     }
 
-    protected void markChanged() {
-        revision++;
+    protected void putChunk(long pos, long value) {
+        chunks.put(pos, value);
+        index.add(pos);
+    }
+
+    protected void removeChunk(long pos) {
+        removeChunk(pos, true);
+    }
+
+    protected void removeChunk(long pos, boolean updateIndex) {
+        chunks.remove(pos);
+        if (updateIndex) index.remove(pos);
+    }
+
+    protected void clearChunks() {
+        chunks.clear();
+        index.clear();
+        chunks.trim(defaultCapacity);
     }
 
     public boolean isHighlighted(final long chunkPos) {
@@ -100,18 +111,17 @@ public abstract class ChunkHighlightBaseCacheHandler implements ChunkHighlightCa
         if (!mc.isSameThread()) {
             throw new RuntimeException("replaceState must be called on the main thread!");
         }
-        this.chunks.clear();
-        this.chunks.trim(defaultCapacity);
-        this.chunks.putAll(state);
-        markChanged();
+        clearChunks();
+        for (var it = state.long2LongEntrySet().fastIterator(); it.hasNext(); ) {
+            var entry = it.next();
+            putChunk(entry.getLongKey(), entry.getLongValue());
+        }
     }
 
     public void reset() {
         if (!mc.isSameThread()) {
             throw new RuntimeException("reset must be called on the main thread!");
         }
-        chunks.clear();
-        chunks.trim(defaultCapacity);
-        markChanged();
+        clearChunks();
     }
 }

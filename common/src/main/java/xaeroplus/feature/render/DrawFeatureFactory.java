@@ -2,6 +2,7 @@ package xaeroplus.feature.render;
 
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.Level;
+import xaeroplus.feature.highlights.HighlightTileIndex;
 import xaeroplus.feature.render.ellipse.*;
 import xaeroplus.feature.render.highlight.*;
 import xaeroplus.feature.render.line.*;
@@ -11,7 +12,7 @@ import xaeroplus.feature.render.text.TextSupplier;
 import xaeroplus.util.FloatSupplier;
 
 import java.util.function.IntSupplier;
-import java.util.function.ToLongFunction;
+import java.util.function.Function;
 
 public interface DrawFeatureFactory {
 
@@ -86,7 +87,7 @@ public interface DrawFeatureFactory {
     static DrawFeature chunkHighlights(
         String id,
         DirectChunkHighlightSupplier supplier,
-        ToLongFunction<ResourceKey<Level>> revisionFunction,
+        Function<ResourceKey<Level>, HighlightTileIndex> indexFunction,
         IntSupplier colorSupplier,
         int refreshIntervalMs
     ) {
@@ -94,7 +95,7 @@ public interface DrawFeatureFactory {
             id,
             new TiledHighlightVertexBuffer(),
             supplier,
-            revisionFunction,
+            indexFunction,
             colorSupplier,
             refreshIntervalMs
         );

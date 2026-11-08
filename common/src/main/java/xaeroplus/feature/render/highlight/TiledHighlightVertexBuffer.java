@@ -10,11 +10,14 @@ import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import it.unimi.dsi.fastutil.longs.Long2LongMap;
+import it.unimi.dsi.fastutil.longs.Long2LongMaps;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
 import net.minecraft.client.Minecraft;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.joml.Vector4f;
+import xaeroplus.feature.highlights.HighlightTileIndex;
 import xaeroplus.feature.render.DrawContext;
 import xaeroplus.feature.render.shaders.XaeroPlusShaders;
 import xaeroplus.util.ChunkUtils;
@@ -23,99 +26,112 @@ import xaeroplus.util.ColorHelper;
 import java.util.OptionalInt;
 
 public class TiledHighlightVertexBuffer extends AbstractHighlightVertexBuffer {
-    private static final int TILE_SHIFT = 9;
     private final Long2ObjectOpenHashMap<HighlightTile> tiles = new Long2ObjectOpenHashMap<>();
-    private final Long2ObjectOpenHashMap<TileSignature> signatures = new Long2ObjectOpenHashMap<>();
+    private final LongLinkedOpenHashSet pendingTiles = new LongLinkedOpenHashSet();
+    private HighlightTileIndex tileIndex = HighlightTileIndex.EMPTY;
+    private long generation = -1;
+    private int refreshIntervalMs;
+
+    public void setTileIndex(HighlightTileIndex tileIndex, int refreshIntervalMs) {
+        if (this.tileIndex != tileIndex) {
+            close();
+            this.tileIndex = tileIndex;
+            stale = true;
+        }
+        this.refreshIntervalMs = refreshIntervalMs;
+    }
 
     @Override
     public boolean needsRefresh(DrawContext ctx) {
-        return stale || flipped != ctx.worldmap() || uniformBuffer == null || tiles.isEmpty();
+        return stale || flipped != ctx.worldmap() || uniformBuffer == null || tiles.isEmpty()
+            || !pendingTiles.isEmpty()
+            || (generation != tileIndex.generation() && System.currentTimeMillis() - lastRefreshed >= refreshIntervalMs);
     }
 
     @Override
     public void refresh(final DrawContext ctx, final Long2LongMap highlights, final int color) {
-        lastRefreshed = System.currentTimeMillis();
-        if (flipped != ctx.worldmap()) signatures.clear();
-        flipped = ctx.worldmap();
-        if (highlights.isEmpty() || ColorHelper.getA(color) == 0.0f) {
+        if (highlights.isEmpty() || tileIndex.isEmpty() || ColorHelper.getA(color) == 0.0f) {
             stale = false;
+            lastRefreshed = System.currentTimeMillis();
+            flipped = ctx.worldmap();
             close();
             return;
         }
-        stale = true;
-        var currentSignatures = new Long2ObjectOpenHashMap<TileSignature>();
-        for (var it = highlights.keySet().iterator(); it.hasNext(); ) {
-            long highlight = it.nextLong();
-            long key = tileKey(highlight);
-            TileSignature signature = currentSignatures.get(key);
-            if (signature == null) {
-                signature = new TileSignature();
-                currentSignatures.put(key, signature);
-            }
-            signature.add(highlight);
+        if (flipped != ctx.worldmap()) {
+            close();
+            flipped = ctx.worldmap();
         }
-        for (var it = tiles.long2ObjectEntrySet().fastIterator(); it.hasNext(); ) {
-            var entry = it.next();
-            if (!currentSignatures.containsKey(entry.getLongKey())) {
-                entry.getValue().buffer().close();
-                it.remove();
-            }
+        if (stale || tiles.isEmpty()
+            || (generation != tileIndex.generation() && System.currentTimeMillis() - lastRefreshed >= refreshIntervalMs)) {
+            synchronizeTiles();
+            generation = tileIndex.generation();
+            lastRefreshed = System.currentTimeMillis();
+            stale = false;
         }
-        var buffers = new Long2ObjectOpenHashMap<ByteBufferBuilder>();
-        var builders = new Long2ObjectOpenHashMap<BufferBuilder>();
+        if (pendingTiles.isEmpty()) return;
+        long started = System.nanoTime();
+        long budget = HighlightRenderBudget.remainingNanos();
+        boolean built = false;
         try {
-            for (var it = currentSignatures.long2ObjectEntrySet().fastIterator(); it.hasNext(); ) {
-                var entry = it.next();
-                long key = entry.getLongKey();
-                TileSignature signature = entry.getValue();
-                if (!signature.matches(signatures.get(key))) {
-                    var buffer = new ByteBufferBuilder(signature.count * 4 * 12);
-                    buffers.put(key, buffer);
-                    builders.put(key, new BufferBuilder(buffer, VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION));
+            while (!pendingTiles.isEmpty() && (!built || System.nanoTime() - started < budget)) {
+                long key = pendingTiles.firstLong();
+                var keys = tileIndex.keysOf(key);
+                if (keys.isEmpty()) {
+                    HighlightTile removed = tiles.remove(key);
+                    if (removed != null) removed.buffer().close();
+                    pendingTiles.removeFirstLong();
+                    continue;
                 }
-            }
-            if (!builders.isEmpty()) {
-                for (var it = highlights.keySet().iterator(); it.hasNext(); ) {
-                    long highlight = it.nextLong();
-                    BufferBuilder builder = builders.get(tileKey(highlight));
-                    if (builder == null) continue;
-                    int chunkPosX = ChunkUtils.longToChunkX(highlight);
-                    int chunkPosZ = ChunkUtils.longToChunkZ(highlight);
-                    float x1 = chunkPosX;
-                    float x2 = chunkPosX + 1;
-                    float y1 = flipped ? chunkPosZ + 1 : chunkPosZ;
-                    float y2 = flipped ? chunkPosZ : chunkPosZ + 1;
-                    builder.addVertex(x1, y2, 0.0F);
-                    builder.addVertex(x2, y2, 0.0F);
-                    builder.addVertex(x2, y1, 0.0F);
-                    builder.addVertex(x1, y1, 0.0F);
-                }
-                for (var it = builders.long2ObjectEntrySet().fastIterator(); it.hasNext(); ) {
-                    var entry = it.next();
-                    long key = entry.getLongKey();
-                    try (var buffer = buffers.remove(key); var meshData = entry.getValue().buildOrThrow()) {
+                long revision = tileIndex.revisions().get(key);
+                try (var buffer = new ByteBufferBuilder(keys.size() * 4 * 12)) {
+                    var builder = new BufferBuilder(buffer, VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION);
+                    for (var it = keys.iterator(); it.hasNext(); ) {
+                        long highlight = it.nextLong();
+                        int chunkPosX = ChunkUtils.longToChunkX(highlight);
+                        int chunkPosZ = ChunkUtils.longToChunkZ(highlight);
+                        float x1 = chunkPosX;
+                        float x2 = chunkPosX + 1;
+                        float y1 = flipped ? chunkPosZ + 1 : chunkPosZ;
+                        float y2 = flipped ? chunkPosZ : chunkPosZ + 1;
+                        builder.addVertex(x1, y2, 0.0F);
+                        builder.addVertex(x2, y2, 0.0F);
+                        builder.addVertex(x2, y1, 0.0F);
+                        builder.addVertex(x1, y1, 0.0F);
+                    }
+                    try (var meshData = builder.buildOrThrow()) {
                         GpuBuffer gpuBuffer = RenderSystem.getDevice().createBuffer(
                             () -> "Chunk Highlight Tile Buffer", GpuBuffer.USAGE_VERTEX, meshData.vertexBuffer());
-                        HighlightTile previous = tiles.put(key, new HighlightTile(gpuBuffer, meshData.drawState().indexCount()));
+                        HighlightTile previous = tiles.put(key, new HighlightTile(gpuBuffer, meshData.drawState().indexCount(), revision));
                         if (previous != null) previous.buffer().close();
                     }
                 }
+                pendingTiles.removeFirstLong();
+                built = true;
             }
         } finally {
-            for (ByteBufferBuilder buffer : buffers.values()) buffer.close();
+            indexCount = 0;
+            for (HighlightTile tile : tiles.values()) indexCount = Math.max(indexCount, tile.indexCount());
+            HighlightRenderBudget.consume(System.nanoTime() - started);
         }
-        signatures.clear();
-        signatures.putAll(currentSignatures);
-        indexCount = 0;
-        for (HighlightTile tile : tiles.values()) indexCount = Math.max(indexCount, tile.indexCount());
-        stale = false;
     }
 
-    private long tileKey(long highlight) {
-        return ChunkUtils.chunkPosToLong(
-            ChunkUtils.longToChunkX(highlight) >> TILE_SHIFT,
-            ChunkUtils.longToChunkZ(highlight) >> TILE_SHIFT
-        );
+    private void synchronizeTiles() {
+        for (var it = tiles.long2ObjectEntrySet().fastIterator(); it.hasNext(); ) {
+            var entry = it.next();
+            if (!tileIndex.revisions().containsKey(entry.getLongKey())) {
+                entry.getValue().buffer().close();
+                pendingTiles.remove(entry.getLongKey());
+                it.remove();
+            }
+        }
+        for (var it = Long2LongMaps.fastIterator(tileIndex.revisions()); it.hasNext(); ) {
+            var entry = it.next();
+            long key = entry.getLongKey();
+            HighlightTile tile = tiles.get(key);
+            if (tile == null || tile.revision() != entry.getLongValue()) pendingTiles.add(key);
+        }
+        indexCount = 0;
+        for (HighlightTile tile : tiles.values()) indexCount = Math.max(indexCount, tile.indexCount());
     }
 
     @Override
@@ -156,7 +172,8 @@ public class TiledHighlightVertexBuffer extends AbstractHighlightVertexBuffer {
     public void close() {
         for (HighlightTile tile : tiles.values()) tile.buffer().close();
         tiles.clear();
-        signatures.clear();
+        pendingTiles.clear();
+        generation = -1;
         indexCount = 0;
         super.close();
     }

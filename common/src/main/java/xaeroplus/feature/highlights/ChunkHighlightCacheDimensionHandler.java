@@ -5,6 +5,7 @@ import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import it.unimi.dsi.fastutil.longs.*;
+import it.unimi.dsi.fastutil.objects.ObjectIterator;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.Level;
 import org.jetbrains.annotations.NotNull;
@@ -12,6 +13,7 @@ import xaeroplus.XaeroPlus;
 import xaeroplus.event.XaeroWorldChangeEvent;
 import xaeroplus.util.ChunkUtils;
 
+import java.util.ArrayDeque;
 import java.util.concurrent.CompletableFuture;
 
 import static xaeroplus.util.ChunkUtils.chunkPosToLong;
@@ -24,6 +26,8 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
     private final ChunkBounds retained = new ChunkBounds();
     private long lastEvictionMs;
     private int sizeAfterEviction;
+    private final ArrayDeque<Long2LongMap> pendingLoads = new ArrayDeque<>();
+    private ObjectIterator<Long2LongMap.Entry> pendingLoadIterator;
     @NotNull private final ResourceKey<Level> dimension;
     private int windowRegionX = 0;
     private int windowRegionZ = 0;
@@ -143,25 +147,12 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
         // it would have huge benefits if we could optimize this
         // there is no cap on the size of the chunks map
         // so this can require iterating through millions of entries
-        boolean changed = false;
-        for (var it = chunks.keySet().longIterator(); it.hasNext(); ) {
-            var chunkPos = it.nextLong();
-            final int chunkX = ChunkUtils.longToChunkX(chunkPos);
-            final int chunkZ = ChunkUtils.longToChunkZ(chunkPos);
-            if (chunkX < chunkXMin
-                || chunkX > chunkXMax
-                || chunkZ < chunkZMin
-                || chunkZ > chunkZMax) {
-                if (staleChunks.contains(chunkPos)) {
-                    dataBuf.put(chunkPos, chunks.get(chunkPos));
-                }
-                it.remove();
-                changed = true;
-            }
-        }
-        retained.set(chunkXMin, chunkXMax, chunkZMin, chunkZMax);
-        if (changed) markChanged();
+        index.evictOutside(chunkXMin, chunkXMax, chunkZMin, chunkZMax, pos -> {
+            if (staleChunks.contains(pos)) dataBuf.put(pos, chunks.get(pos));
+            removeChunk(pos, false);
+        });
         chunks.trim(Math.max(defaultCapacity, chunks.size()));
+        retained.set(chunkXMin, chunkXMax, chunkZMin, chunkZMax);
         lastEvictionMs = System.currentTimeMillis();
         sizeAfterEviction = chunks.size();
         if (dataBuf.isEmpty()) return Futures.immediateVoidFuture();
@@ -312,6 +303,33 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
     @Override
     public void handleTick() {}
 
+    public void integratePendingLoads() {
+        if (!mc.isSameThread()) {
+            throw new IllegalStateException("integratePendingLoads must be called on the main thread");
+        }
+        if (pendingLoads.isEmpty() || HighlightTickBudget.remainingNanos() <= 0) return;
+        long started = System.nanoTime();
+        long budget = HighlightTickBudget.remainingNanos();
+        try {
+            while (!pendingLoads.isEmpty() && System.nanoTime() - started < budget) {
+                if (pendingLoadIterator == null) {
+                    pendingLoadIterator = Long2LongMaps.fastIterator(pendingLoads.peekFirst());
+                }
+                if (!pendingLoadIterator.hasNext()) {
+                    pendingLoads.removeFirst();
+                    pendingLoadIterator = null;
+                    continue;
+                }
+                var entry = pendingLoadIterator.next();
+                long pos = entry.getLongKey();
+                putChunk(pos, entry.getLongValue());
+                retained.include(ChunkUtils.longToChunkX(pos), ChunkUtils.longToChunkZ(pos));
+            }
+        } finally {
+            HighlightTickBudget.consume(System.nanoTime() - started);
+        }
+    }
+
     @Override
     public void onEnable() {}
 
@@ -339,8 +357,7 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
             if (dataBuf.isEmpty()) return;
             // write new data to local cache
             retained.include(minX, maxX, minZ, maxZ);
-            chunks.putAll(dataBuf);
-            markChanged();
+            pendingLoads.addLast(dataBuf);
         }
 
         @Override

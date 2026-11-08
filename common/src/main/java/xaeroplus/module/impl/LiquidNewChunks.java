@@ -16,6 +16,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import xaeroplus.Globals;
 import xaeroplus.event.*;
+import xaeroplus.feature.highlights.HighlightTileIndex;
 import xaeroplus.feature.highlights.SavableHighlightCacheInstance;
 import xaeroplus.feature.render.DrawFeatureFactory;
 import xaeroplus.module.Module;
@@ -160,7 +161,7 @@ public class LiquidNewChunks extends Module {
             DrawFeatureFactory.chunkHighlights(
                 "LiquidNewChunks",
                 this::getNewChunkHighlightsState,
-                this::getHighlightsRevision,
+                this::getHighlightsIndex,
                 this::getNewChunksColor,
                 250
             )
@@ -177,7 +178,7 @@ public class LiquidNewChunks extends Module {
             DrawFeatureFactory.chunkHighlights(
                 inverseDrawFeatureId,
                 this::getInverseNewChunkHighlightsState,
-                this::getInverseHighlightsRevision,
+                this::getInverseHighlightsIndex,
                 this::getInverseColor,
                 250
             )
@@ -217,16 +218,16 @@ public class LiquidNewChunks extends Module {
         return newChunksCache.get().getCacheMap(dimension);
     }
 
-    public long getHighlightsRevision(final ResourceKey<Level> dimension) {
-        return newChunksCache.get().revision(dimension);
+    public HighlightTileIndex getHighlightsIndex(final ResourceKey<Level> dimension) {
+        return newChunksCache.get().tileIndex(dimension);
     }
 
     public Long2LongMap getInverseNewChunkHighlightsState(final ResourceKey<Level> dimension) {
         return inverseNewChunksCache.get().getCacheMap(dimension);
     }
 
-    public long getInverseHighlightsRevision(final ResourceKey<Level> dimension) {
-        return inverseNewChunksCache.get().revision(dimension);
+    public HighlightTileIndex getInverseHighlightsIndex(final ResourceKey<Level> dimension) {
+        return inverseNewChunksCache.get().tileIndex(dimension);
     }
 
     public boolean isNewChunk(final int chunkPosX, final int chunkPosZ, final ResourceKey<Level> dimensionId) {
