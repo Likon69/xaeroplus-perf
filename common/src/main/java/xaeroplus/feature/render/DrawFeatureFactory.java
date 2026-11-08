@@ -1,0 +1,248 @@
+package xaeroplus.feature.render;
+
+import xaeroplus.feature.render.ellipse.*;
+import xaeroplus.feature.render.highlight.*;
+import xaeroplus.feature.render.line.*;
+import xaeroplus.feature.render.text.AsyncTextDrawFeature;
+import xaeroplus.feature.render.text.DirectTextDrawFeature;
+import xaeroplus.feature.render.text.TextSupplier;
+import xaeroplus.util.FloatSupplier;
+
+import java.util.function.IntSupplier;
+
+public interface DrawFeatureFactory {
+
+    /**
+     * Refreshed on MC render thread
+     * Single color across all ellipses
+     * Color function is called each frame
+     */
+    static DrawFeature ellipses(
+        String id,
+        EllipseSupplier ellipseSupplier,
+        IntSupplier colorSupplier,
+        FloatSupplier thicknessSupplier,
+        int refreshIntervalMs
+    ) {
+        return new EllipseDrawFeature(
+            id,
+            new EllipseProvider(
+                ellipseSupplier,
+                colorSupplier,
+                thicknessSupplier
+            ),
+            refreshIntervalMs
+        );
+    }
+
+    /**
+     * Refreshed on MC render thread
+     * Color function per-ellipse
+     * Color function is called only on refresh
+     */
+    static DrawFeature multiColorEllipses(
+        String id,
+        MultiColorEllipseSupplier ellipseSupplier,
+        MultiColorEllipseColorFunction colorFunction,
+        FloatSupplier thicknessSupplier,
+        int refreshIntervalMs
+    ) {
+        return new MultiColorEllipseDrawFeature(
+            id,
+            new MultiColorEllipseProvider(
+                ellipseSupplier,
+                colorFunction,
+                thicknessSupplier
+            ),
+            refreshIntervalMs
+        );
+    }
+
+    /**
+     * Refreshed on MC render thread
+     * Single color across all highlights
+     * Color function is called each frame
+     */
+    static DrawFeature chunkHighlights(
+        String id,
+        DirectChunkHighlightSupplier chunkHighlightSupplier,
+        IntSupplier colorSupplier,
+        int refreshIntervalMs
+    ) {
+        return new DirectChunkHighlightDrawFeature(
+            id,
+            new HighlightVertexBuffer(),
+            new DirectChunkHighlightProvider(
+                chunkHighlightSupplier,
+                colorSupplier
+            ),
+            refreshIntervalMs
+        );
+    }
+
+    /**
+     * Refreshed on MC render thread
+     * Color function per-chunk
+     * Color function is called only on refresh
+     */
+    static DrawFeature multiColorChunkHighlights(
+        String id,
+        DirectChunkHighlightSupplier chunkHighlightSupplier,
+        MultiColorHighlightColorFunction colorFunction,
+        int refreshIntervalMs
+    ) {
+        return new DirectChunkHighlightDrawFeature(
+            id,
+            new MultiColorHighlightVertexBuffer(colorFunction),
+            new DirectChunkHighlightProvider(
+                chunkHighlightSupplier,
+                () -> 0
+            ),
+            refreshIntervalMs
+        );
+    }
+
+    /**
+     * @deprecated Use {@link #asyncChunkHighlights(String, AsyncChunkHighlightSupplier, IntSupplier, int)} instead
+     */
+    @Deprecated(since = "2.36.4")
+    static DrawFeature asyncChunkHighlights(
+        String id,
+        AsyncChunkHighlightSupplier chunkHighlightSupplier,
+        IntSupplier colorSupplier
+    ) {
+        return asyncChunkHighlights(id, chunkHighlightSupplier, colorSupplier, 500);
+    }
+
+    /**
+     * Refreshed async, off the MC render thread
+     * Single color across all highlights
+     * Color function is called each frame
+     * Use this if your chunk highlight supplier is costly in terms of time and can be called off the MC render thread
+     */
+    static DrawFeature asyncChunkHighlights(
+        String id,
+        AsyncChunkHighlightSupplier chunkHighlightSupplier,
+        IntSupplier colorSupplier,
+        int refreshIntervalMs
+    ) {
+        return new AsyncChunkHighlightDrawFeature(
+            id,
+            new HighlightVertexBuffer(),
+            new AsyncChunkHighlightProvider(
+                chunkHighlightSupplier,
+                colorSupplier
+            ),
+            refreshIntervalMs
+        );
+    }
+
+    /**
+     * @deprecated Use {@link #multiColorAsyncChunkHighlights(String, AsyncChunkHighlightSupplier, MultiColorHighlightColorFunction, int)} instead
+     */
+    @Deprecated(since = "2.36.4")
+    static DrawFeature multiColorAsyncChunkHighlights(
+        String id,
+        AsyncChunkHighlightSupplier chunkHighlightSupplier,
+        MultiColorHighlightColorFunction colorFunction
+    ) {
+        return multiColorAsyncChunkHighlights(id, chunkHighlightSupplier, colorFunction, 500);
+    }
+
+    /**
+     * Refreshed async, off the MC render thread
+     * Color function per-chunk
+     * Color function is called only on refresh
+     * Use this if your chunk highlight supplier is costly in terms of time and can be called off the MC render thread
+     */
+    static DrawFeature multiColorAsyncChunkHighlights(
+        String id,
+        AsyncChunkHighlightSupplier chunkHighlightSupplier,
+        MultiColorHighlightColorFunction colorFunction,
+        int refreshIntervalMs
+    ) {
+        return new AsyncChunkHighlightDrawFeature(
+            id,
+            new MultiColorHighlightVertexBuffer(colorFunction),
+            new AsyncChunkHighlightProvider(
+                chunkHighlightSupplier,
+                () -> 0
+            ),
+            refreshIntervalMs
+        );
+    }
+
+    /**
+     * Refreshed on MC render thread
+     * Single color across all lines
+     * Color function is called each frame
+     */
+    static DrawFeature lines(
+        String id,
+        LineSupplier lineSupplier,
+        IntSupplier colorSupplier,
+        FloatSupplier lineWidthSupplier,
+        int refreshIntervalMs
+    ) {
+        return new LineDrawFeature(
+            id,
+            new LineProvider(
+                lineSupplier,
+                colorSupplier,
+                lineWidthSupplier
+            ),
+            refreshIntervalMs
+        );
+    }
+
+    /**
+     * Refreshed on MC render thread
+     * Color function per-line
+     * Color function is called only on refresh
+     */
+    static DrawFeature multiColorLines(
+        String id,
+        MultiColorLineSupplier lineSupplier,
+        MultiColorLineColorFunction colorFunction,
+        FloatSupplier lineWidthSupplier,
+        int refreshIntervalMs
+    ) {
+        return new MultiColorLineDrawFeature(
+            id,
+            new MultiColorLineProvider(
+                lineSupplier,
+                colorFunction,
+                lineWidthSupplier
+            ),
+            refreshIntervalMs
+        );
+    }
+
+    /**
+     * Refreshed every frame on MC render thread
+     */
+    static DrawFeature text(
+        String id,
+        TextSupplier textSupplier
+    ) {
+        return new DirectTextDrawFeature(
+            id,
+            textSupplier
+        );
+    }
+
+    /**
+     * Refreshed async off the MC render thread at a set interval
+     */
+    static DrawFeature asyncText(
+        String id,
+        TextSupplier textSupplier,
+        int refreshIntervalMs
+    ) {
+        return new AsyncTextDrawFeature(
+            id,
+            textSupplier,
+            refreshIntervalMs
+        );
+    }
+}

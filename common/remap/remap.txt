@@ -1,0 +1,4 @@
+# forge needs certain mixins not remapped
+remap = true) // $REMAP::remap=false)
+# fabric minimap compatibility mixin plugin
+"plugin": "xaeroplus.fabric.util.compat.XaeroPlusCompatibleMinimapMixinPlugin",::

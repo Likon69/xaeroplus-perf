@@ -1,0 +1,28 @@
+package xaeroplus.feature.render;
+
+import com.mojang.blaze3d.vertex.VertexConsumer;
+
+public class DrawHelper {
+
+    public static void addColoredLineQuadToExistingBuffer(
+        VertexConsumer vertexBuffer, float x1, float y1, float x2, float y2, float r, float g, float b, float a
+    ) {
+        // The line shader expands this segment into a quad in screen space using gl_VertexID.
+        // Position and UV0 are relative to the line buffer's block origin. The shader moves them
+        // into camera-relative map-space before applying MapViewMatrix.
+        vertexBuffer.addVertex(x1, y1, 0.0F).setColor(r, g, b, a).setUv(x2, y2);
+        vertexBuffer.addVertex(x1, y1, 0.0F).setColor(r, g, b, a).setUv(x2, y2);
+        vertexBuffer.addVertex(x1, y1, 0.0F).setColor(r, g, b, a).setUv(x2, y2);
+        vertexBuffer.addVertex(x1, y1, 0.0F).setColor(r, g, b, a).setUv(x2, y2);
+    }
+
+    public static void addColoredEllipseQuadToExistingBuffer(
+        VertexConsumer vertexBuffer, float centerX, float centerZ, float radiusX, float radiusZ,
+        float r, float g, float b, float a
+    ) {
+        // The ellipse shader expands this packed center and radii into a screen-space quad.
+        for (var i = 0; i < 4; i++) {
+            vertexBuffer.addVertex(centerX, centerZ, 0.0F).setUv(radiusX, radiusZ).setColor(r, g, b, a);
+        }
+    }
+}

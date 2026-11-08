@@ -1,0 +1,309 @@
+package xaeroplus.module.impl;
+
+import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.ints.IntList;
+import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
+import it.unimi.dsi.fastutil.ints.IntSet;
+import it.unimi.dsi.fastutil.longs.Long2LongMap;
+import net.lenni0451.lambdaevents.EventHandler;
+import net.minecraft.core.Holder;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.util.BitStorage;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.biome.Biomes;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.*;
+import xaeroplus.Globals;
+import xaeroplus.XaeroPlus;
+import xaeroplus.event.ChunkDataEvent;
+import xaeroplus.feature.highlights.SavableHighlightCacheInstance;
+import xaeroplus.feature.render.DrawFeatureFactory;
+import xaeroplus.module.Module;
+import xaeroplus.settings.Settings;
+import xaeroplus.util.ChunkUtils;
+import xaeroplus.util.ColorHelper;
+
+import java.time.Duration;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static net.minecraft.world.level.Level.*;
+import static xaeroplus.module.impl.PaletteNewChunks.BiomeCheckResult.*;
+import static xaeroplus.util.ColorHelper.getColor;
+
+public class PaletteNewChunks extends Module {
+    public final SavableHighlightCacheInstance newChunksCache = new SavableHighlightCacheInstance("XaeroPlusPaletteNewChunks");
+    public final SavableHighlightCacheInstance newChunksInverseCache = new SavableHighlightCacheInstance("XaeroPlusPaletteNewChunksInverse");
+    private int newChunksColor = getColor(255, 0, 0, 100);
+    private final IntSet presentStateIdsBuf = new IntOpenHashSet();
+    private final IntList presentStateIdsOrderedBuf = new IntArrayList();
+    private boolean renderInverse = false;
+    private Duration minRescanAge = Duration.ofDays(7);
+    private boolean rescan = false;
+
+    public void setDiskCache(final boolean disk) {
+        newChunksCache.setDiskCache(disk, isEnabled());
+        newChunksInverseCache.setDiskCache(disk, isEnabled());
+    }
+
+    @EventHandler
+    public void onChunkData(ChunkDataEvent event) {
+        if (event.seenChunk()) return; // never will be newchunk if we've already cached it
+        var chunk = event.chunk();
+        var dim = chunk.getLevel().dimension();
+        var x = chunk.getPos().x;
+        var z = chunk.getPos().z;
+        try {
+            if (shouldSkipScan(x, z, dim, newChunksCache)) return;
+            if (shouldSkipScan(x, z, dim, newChunksInverseCache)) return;
+            if (scanIsNewChunk(dim, chunk)) {
+                newChunksCache.get().addHighlight(x, z, dim);
+            } else {
+                newChunksInverseCache.get().addHighlight(x, z, dim);
+            }
+        } catch (final Exception e) {
+            XaeroPlus.LOGGER.error("Error checking palette NewChunk at [{} {}]", x, z, e);
+        }
+    }
+
+    private boolean shouldSkipScan(final int x, final int z, final ResourceKey<Level> dim, final SavableHighlightCacheInstance cache) {
+        if (cache.get().isHighlighted(x, z, dim)) {
+            if (rescan) {
+                var chunks = cache.get().getCacheMap(dim);
+                var foundTime = chunks.get(ChunkUtils.chunkPosToLong(x, z));
+                var age = Duration.ofMillis(Math.abs(System.currentTimeMillis() - foundTime));
+                if (age.compareTo(minRescanAge) < 0) {
+                    return true;
+                }
+                // warning !!! data deletion !!!
+                cache.get().removeHighlight(x, z, dim);
+            } else {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public boolean scanIsNewChunk(final ResourceKey<Level> dim, final LevelChunk chunk) {
+        if (dim == OVERWORLD) {
+            return Settings.REGISTRY.paletteNewChunksVersionUpgradedChunks.get()
+                ? scanNewChunkBlockStatePalette(chunk)
+                : switch (scanNewChunkBiomePalette(chunk, true)) {
+                    case NO_PLAINS -> false;
+                    case PLAINS_IN_PALETTE -> true;
+                    case PLAINS_PRESENT -> scanNewChunkBlockStatePalette(chunk);
+                };
+        } else if (dim == NETHER) {
+            return Settings.REGISTRY.paletteNewChunksVersionUpgradedChunks.get()
+                ? scanNewChunkBlockStatePalette(chunk)
+                : scanNewChunkBiomePalette(chunk, false) == PLAINS_IN_PALETTE;
+        } else if (dim == END) {
+            return scanNewChunkBiomePalette(chunk, false) == PLAINS_IN_PALETTE;
+        }
+        return false;
+    }
+
+    /**
+     * MC generates chunks in multiple steps where each step progressively mutates the chunk data
+     * For more info see this explanation by Henrik Kniberg: https://youtu.be/ob3VwY4JyzE&t=453
+     *
+     * When a chunk is first generated it is populated first by air, then by additional block types like stone, water, etc
+     * By the end of these steps, the chunk's blockstate palette will still contain references to all states that were ever present
+     * For more info on what chunk palettes are see: https://minecraft.wiki/w/Minecraft_Wiki:Projects/wiki.vg_merge/Chunk_Format#Paletted_Container_structure
+     *
+     * When the MC server writes the chunks to region files it compacts the palette to save disk space
+     *
+     * compacting has 2 effects:
+     * 1. palette entries without values present in the chunk are removed
+     * 2. the order of ids in the palette can change as it is rebuilt in order of the actual blockstates present in the chunk
+     *
+     * Importantly, newly generated chunk data is first sent to the player, and only afterward is saved to disk and compacted
+     *
+     * We can examine palette and blockstate data to check if it was compacted or not. If it wasn't compacted, it's a newly generated chunk
+     * 1. For Linear (list) palettes: check if palette entries are in order of the blockstates present in the chunk
+     * 2. For HashMap palette, check if there are "extra" palette entries that are not present in the chunk
+     *
+     * There is a chance for false negatives if we load a chunk with another player that removes or adds a blockstate type from the chunk
+     * Or if the chunk is largely empty like in the End dimension, but these same mechanics can also be applied to the biome palette
+     *
+     * Credits to etianl (https://github.com/etianl/Trouser-Streak) for first idea and public implementation for examining palette entries
+     * and crosby (https://github.com/RacoonDog) for idea to check if air is the first palette entry that this was extended from
+     */
+    public boolean scanNewChunkBlockStatePalette(LevelChunk chunk) {
+        var sections = chunk.getSections();
+        if (sections.length == 0) return false;
+        // somewhat arbitrary threshold
+        // server can tick chunks before sending
+        // which can introduce false positives, e.g. a fire block gets extinguished in the tick
+        // but in a true newchunk it's likely that multiple sections will be positive
+        int threshold = 3;
+        int positiveCount = 0;
+        for (int i = 0; i < sections.length; i++) {
+            var section = sections[i];
+            var paletteContainerData = section.getStates().data;
+            var palette = paletteContainerData.palette();
+            if (palette instanceof LinearPalette<BlockState>) {
+                if (scanLinearPaletteOrder(palette, section)) {
+                    positiveCount++;
+                }
+            } else if (palette instanceof HashMapPalette<BlockState>) {
+                if (checkForExtraPaletteEntries(paletteContainerData)) {
+                    positiveCount++;
+                }
+            }
+            if (positiveCount >= threshold) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public boolean scanLinearPaletteOrder(final Palette<BlockState> palette, final LevelChunkSection section) {
+        // when chunk data is saved to disk, a new palette is created to pack only present ids
+        // the new palette selects its ids in order of iterating over the backing BitStorage
+        // so if the order does not match it wasn't saved prior to us loading it, and therefore is a newly generated chunk
+        presentStateIdsOrderedBuf.clear();
+        for (int id = 0; id < palette.getSize(); id++) {
+            int blockStateId = Block.getId(palette.valueFor(id));
+            presentStateIdsOrderedBuf.add(blockStateId);
+        }
+        presentStateIdsBuf.clear();
+        // need atomics to mutate inside the lambda
+        final AtomicInteger searchIndex = new AtomicInteger(0);
+        final AtomicBoolean isNewChunk = new AtomicBoolean(false);
+        section.getStates().data.storage().getAll(dataId -> {
+            if (isNewChunk.get()) return;
+            if (searchIndex.get() == presentStateIdsOrderedBuf.size()) return;
+            int blockStateId = Block.getId(palette.valueFor(dataId));
+            if (presentStateIdsBuf.contains(blockStateId)) return; // we've already seen this blockstate, continue iterating
+            int nextExpectedId = presentStateIdsOrderedBuf.getInt(searchIndex.get());
+            if (blockStateId == nextExpectedId) {
+                presentStateIdsBuf.add(blockStateId);
+                searchIndex.incrementAndGet();
+            } else {
+                // found an id that is out of order
+                isNewChunk.set(true);
+            }
+        });
+        return isNewChunk.get();
+    }
+
+    /**
+     * Same logic as BlockState palette but we check the biomes palette.
+     * MC initializes palettes with the Plains biome.
+     *
+     * This check is very reliable in all dimensions - even the overworld as long as plains is not a real biome present.
+     *
+     * But the main reason we still use the blockstate palette check is for detecting newly upgraded
+     * chunks from previous MC versions like 1.12.2 - which is the vast majority of chunks on 2b2t
+     * Marking version upgraded chunks as new is useful for determining whether a 1.12 trail was already followed or not
+     */
+    public synchronized BiomeCheckResult scanNewChunkBiomePalette(LevelChunk chunk, boolean checkData) {
+        var sections = chunk.getSections();
+        if (sections.length == 0) return NO_PLAINS;
+        var firstSection = sections[0];
+        var biomes = firstSection.getBiomes();
+        if (biomes instanceof PalettedContainer<Holder<Biome>> biomesPaletteContainer) {
+            var palette = biomesPaletteContainer.data.palette();
+            boolean paletteContainsPlains = palette.maybeHas(PaletteNewChunks::isPlainsBiome);
+            if (paletteContainsPlains && checkData) {
+                if (palette.getSize() == 1) return PLAINS_PRESENT;
+                var storage = biomesPaletteContainer.data.storage();
+                presentStateIdsBuf.clear();
+                storage.getAll(presentStateIdsBuf::add);
+                for (int id : presentStateIdsBuf) {
+                    if (isPlainsBiome(palette.valueFor(id))) {
+                        return PLAINS_PRESENT;
+                    }
+                }
+            }
+            if (paletteContainsPlains) return PLAINS_IN_PALETTE;
+        }
+        return NO_PLAINS;
+    }
+
+    public enum BiomeCheckResult {
+        NO_PLAINS,
+        PLAINS_IN_PALETTE,
+        PLAINS_PRESENT
+    }
+
+    public synchronized boolean checkForExtraPaletteEntries(PalettedContainer.Data<BlockState> paletteContainer) {
+        presentStateIdsBuf.clear(); // reusing to reduce gc pressure
+        var palette = paletteContainer.palette();
+        BitStorage storage = paletteContainer.storage();
+        storage.getAll(presentStateIdsBuf::add);
+        return palette.getSize() > presentStateIdsBuf.size();
+    }
+
+    private static boolean isPlainsBiome(Holder<Biome> holder) {
+        return holder.is(Biomes.PLAINS);
+    }
+
+    @Override
+    public void onEnable() {
+        Globals.drawManager.registry().register(
+            DrawFeatureFactory.chunkHighlights(
+                "PaletteNewChunks",
+                this::getHighlightsState,
+                this::getNewChunksColor,
+                250
+            )
+        );
+        newChunksCache.onEnable();
+        newChunksInverseCache.onEnable();
+    }
+
+    @Override
+    public void onDisable() {
+        newChunksCache.onDisable();
+        newChunksInverseCache.onDisable();
+        Globals.drawManager.registry().unregister("PaletteNewChunks");
+    }
+
+    public int getNewChunksColor() {
+        return newChunksColor;
+    }
+
+    public void setRgbColor(final int color) {
+        newChunksColor = ColorHelper.getColorWithAlpha(color, Settings.REGISTRY.paletteNewChunksAlphaSetting.getAsInt());
+    }
+
+    public void setAlpha(final double a) {
+        newChunksColor = ColorHelper.getColorWithAlpha(newChunksColor, (int) (a));
+    }
+
+    public void setInverse(final boolean b) {
+        renderInverse = b;
+    }
+
+    public void setRescan(final boolean b) {
+        this.rescan = b;
+    }
+
+    public void setMinRescanAge(final Duration duration) {
+        minRescanAge = duration;
+    }
+
+    public boolean isHighlighted(final int chunkPosX, final int chunkPosZ, final ResourceKey<Level> dimensionId) {
+        return renderInverse
+            ? isInverseNewChunk(chunkPosX, chunkPosZ, dimensionId)
+            : isNewChunk(chunkPosX, chunkPosZ, dimensionId);
+    }
+
+    public Long2LongMap getHighlightsState(final ResourceKey<Level> dimension) {
+        return renderInverse
+            ? newChunksInverseCache.get().getCacheMap(dimension)
+            : newChunksCache.get().getCacheMap(dimension);
+    }
+
+    public boolean isNewChunk(final int chunkPosX, final int chunkPosZ, final ResourceKey<Level> dimensionId) {
+        return newChunksCache.get().isHighlighted(chunkPosX, chunkPosZ, dimensionId);
+    }
+
+    public boolean isInverseNewChunk(final int chunkPosX, final int chunkPosZ, final ResourceKey<Level> dimensionId) {
+        return newChunksInverseCache.get().isHighlighted(chunkPosX, chunkPosZ, dimensionId);
+    }
+}

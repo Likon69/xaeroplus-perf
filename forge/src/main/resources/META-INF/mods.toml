@@ -1,0 +1,53 @@
+modLoader = "javafml"
+loaderVersion = "[51,)"
+#issueTrackerURL = ""
+license = "MIT"
+
+[[mods]]
+modId = "xaeroplus"
+version = "${version}"
+displayName = "XaeroPlus"
+authors = "rfresh2"
+description = '''
+Xaero WorldMap / Minimap Extra Features
+'''
+logoFile = "icon.png"
+displayTest="IGNORE_ALL_VERSION"
+clientSideOnly = true
+
+[[dependencies.xaeroplus]]
+modId = "forge"
+mandatory = true
+versionRange = "[60.1.0,)"
+ordering = "NONE"
+side = "CLIENT"
+
+[[dependencies.xaeroplus]]
+modId = "minecraft"
+mandatory = true
+versionRange = "[1.21.11]"
+ordering = "NONE"
+side = "CLIENT"
+
+[[dependencies.xaeroplus]]
+modId = "xaerominimap"
+mandatory = false
+versionRange = "[${minimap_version}]"
+ordering = "BEFORE"
+side = "CLIENT"
+
+[[dependencies.xaeroplus]]
+modId = "xaerobetterpvp"
+mandatory = false
+versionRange = "[${minimap_version}]"
+ordering = "BEFORE"
+side = "CLIENT"
+
+[[dependencies.xaeroplus]]
+modId = "xaeroworldmap"
+mandatory = true
+versionRange = "[${worldmap_version}]"
+ordering = "BEFORE"
+side = "CLIENT"
+
+

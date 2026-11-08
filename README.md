@@ -1,0 +1,119 @@
+# XaeroPlus
+
+<p align="center">
+  <a href="https://discord.gg/nJZrSaRKtb">
+  <img alt="Discord" src="https://dcbadge.limes.pink/api/server/nJZrSaRKtb">
+  </a>
+</p>
+
+<p align="center">
+  <a href=https://modrinth.com/mod/xaeroplus ><img alt="Modrinth Downloads" src="https://img.shields.io/modrinth/dt/EnPUzSTg?style=for-the-badge&logo=modrinth&label=Modrinth&color=00AF5C"></a>
+  <a href=https://legacy.curseforge.com/minecraft/mc-mods/xaeroplus ><img alt="CurseForge Downloads" src="https://cf.way2muchnoise.eu/866084.svg?badge_style=for_the_badge"></a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/MC-1.12.2-brightgreen.svg" alt="Minecraft"/>
+  <img src="https://img.shields.io/badge/MC-1.19.2-brightgreen.svg" alt="Minecraft"/>
+  <img src="https://img.shields.io/badge/MC-1.19.4-brightgreen.svg" alt="Minecraft"/>
+  <img src="https://img.shields.io/badge/MC-1.20.1-brightgreen.svg" alt="Minecraft"/>
+  <img src="https://img.shields.io/badge/MC-1.20.2-brightgreen.svg" alt="Minecraft"/>
+  <img src="https://img.shields.io/badge/MC-1.20.4-brightgreen.svg" alt="Minecraft"/>
+  <img src="https://img.shields.io/badge/MC-1.20.6-brightgreen.svg" alt="Minecraft"/>
+  <img src="https://img.shields.io/badge/MC-1.21.1-brightgreen.svg" alt="Minecraft"/>
+  <img src="https://img.shields.io/badge/MC-1.21.3-brightgreen.svg" alt="Minecraft"/>
+  <img src="https://img.shields.io/badge/MC-1.21.4-brightgreen.svg" alt="Minecraft"/>
+  <img src="https://img.shields.io/badge/MC-1.21.5-brightgreen.svg" alt="Minecraft"/>
+  <img src="https://img.shields.io/badge/MC-1.21.8-brightgreen.svg" alt="Minecraft"/>
+  <img src="https://img.shields.io/badge/MC-1.21.10-brightgreen.svg" alt="Minecraft"/>
+  <img src="https://img.shields.io/badge/MC-1.21.11-brightgreen.svg" alt="Minecraft"/>
+  <img src="https://img.shields.io/badge/MC-26.1.2-brightgreen.svg" alt="Minecraft"/>
+  <img src="https://img.shields.io/badge/MC-26.2-brightgreen.svg" alt="Minecraft"/>
+  <img src="https://img.shields.io/badge/MC-26.3-brightgreen.svg" alt="Minecraft"/>
+  <img src="https://img.shields.io/github/languages/code-size/rfresh2/XaeroPlus.svg" alt="Code size"/>
+  <img src="https://img.shields.io/github/repo-size/rfresh2/XaeroPlus.svg" alt="GitHub repo size"/>
+  <img src="https://img.shields.io/endpoint?url=https%3A%2F%2Ftokei.kojix2.net%2Fbadge%2Fgithub%2Frfresh2%2FXaeroPlus%2Flines" alt="Lines of Code"/>
+</p>
+
+XaeroPlus is a client-side Minecraft mod that depends on and modifies the Xaero's WorldMap and Minimap mods with extra
+features and performance improvements - particularly for use on anarchy servers like 2b2t.
+
+XaeroPlus is not affiliated or endorsed by xaero96. Please report issues to XaeroPlus's [Github](https://github.com/rfresh2/XaeroPlus/issues) or [discord server](https://discord.gg/nJZrSaRKtb).
+
+<details>
+<summary>Example Map</summary>
+<p align="center">
+  <img src="https://i.imgur.com/oYYhDoS.jpeg">
+</p>
+</details>
+
+# Download
+
+Available on:
+
+* [Github Releases](https://github.com/rfresh2/XaeroPlus/releases)
+* [Modrinth](https://modrinth.com/mod/xaeroplus)
+* [CurseForge](https://legacy.curseforge.com/minecraft/mc-mods/xaeroplus)
+* [GitHub Actions](https://github.com/rfresh2/XaeroPlus/actions?query=branch%3Amainline+)
+
+# Xaero Versions
+
+Each XaeroPlus release is only compatible with a specific version of Xaero's WorldMap and Minimap (or [BetterPVP](https://chocolateminecraft.com/betterpvp2.php)).
+
+Download and include these mods **in addition** to `XaeroPlus-*.jar` (3 jars total).
+
+You can find download links to Xaero's mods here:
+* https://modrinth.com/mod/xaeros-world-map/versions
+* https://modrinth.com/mod/xaeros-minimap/versions
+
+# Modifications
+
+* [1.5-3x your FPS by limiting the framerate the minimap is rendered at!](https://youtu.be/hIG-VyGQLao)
+  * Tip: For least visual impact, lock the minimap's north
+* Drawing Tool
+* [Adjustable minimap scaling that increases how many chunks are visible](https://youtu.be/dNqxGzGAHyk)
+* [NewChunks Highlighting in MiniMap and WorldMap.](https://youtu.be/n-Tf6TJSsiA)
+* [Baritone](https://github.com/cabaletta/baritone) integration
+  * Baritone Goals synced as temporary waypoints
+  * [Point and Click Travel](https://youtu.be/gbguyfXLgi0)
+* [WorldTools](https://modrinth.com/mod/worldtools/) World Downloader integration
+  * [Highlights saved chunks while downloading](https://youtu.be/mtCqwJ_RGcc)
+* [Portals Highlighting in Minimap and WorldMap](https://youtu.be/zstGVfVRrAs)
+* [Portal Skip Highlighting in Minimap and WorldMap](https://youtu.be/g_yQ8D95RY0). Detects chunks where a portal could have been loaded.
+* OldChunks Highlighting in Minimap and WorldMap.
+  * Intended for use on 2b2t. Highlights chunks that were generated in 1.12.2 or lower in the Overworld and Nether based on the natural blocks present in the chunk.
+* Transparent obsidian roof. Useful for mapping 2b2t spawn.
+* Setting to always view and create waypoints in the Overworld when in Nether.
+* [Render server view distance square around the player.](https://youtu.be/iY_JTGFK6Yg)
+* [Dimension hot-switching on WorldMap and Minimap.](https://youtu.be/hXZQtX2df3I)
+  * Recommended: Create keybinds for Minimap dimension switching.
+* Waypoints GUI:
+  * GUI button to enable/disable all waypoints
+* [Waypoint Beacons](https://imgur.com/a/jGgHqL4)
+* WorldMap and Waypoint directories optionally indexed by:
+  * Multiplayer server list name.
+  * Base Server Domain Name
+  * Server IP (Xaero's default)
+  * **Changing this setting requires you to manually rename existing folders in `.minecraft/xaero/minimap` and `.minecraft/xaero/world-map`**
+* WorldMap 1.30.0 added cave data saving and rendering. There is a setting on by default in XaeroPlus that changes how the nether is rendered with cave mode off to be as it was previously.
+  * This removes the need to manually move existing world data files.
+
+Configurations are in the Xaero WorldMap and Minimap settings GUI.
+
+Toggleable settings support keybinds through the standard Minecraft Controls GUI.
+
+# Language Translations
+
+PR's are welcomed for language translations. 
+
+Language files are located in `common/src/main/resources/assets/xaeroplus/lang/`
+
+Submit PR's targeting the `1.20.1` branch only. Changes will be merged to all the other MC versions by me.
+
+# Other Useful Tools
+
+* Convert JourneyMap World Files to Xaero: [JMToXaero](https://github.com/Entropy5/JMtoXaero)
+* Convert JourneyMap Waypoints to Xaero: [JMWaypointsToXaero](https://github.com/rfresh2/JMWaypointsToXaero)
+* 2b2t World Download Xaero Maps:
+  * 2025 100k^2 (6GB): https://data.mc-archive.org/s/6XJqdEtxkqwSGrs
+    * Cache (15GB): https://data.mc-archive.org/s/HSB3aEatWDFwG4Z 
+  * 2022 256k^2 (20GB): https://data.mc-archive.org/s/eFDEy2XKof83Kez

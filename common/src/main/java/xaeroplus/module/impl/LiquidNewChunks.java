@@ -1,0 +1,229 @@
+package xaeroplus.module.impl;
+
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import it.unimi.dsi.fastutil.longs.Long2LongMap;
+import it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet;
+import it.unimi.dsi.fastutil.objects.ReferenceSet;
+import net.lenni0451.lambdaevents.EventHandler;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.BlockPos.MutableBlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import xaeroplus.Globals;
+import xaeroplus.event.*;
+import xaeroplus.feature.highlights.SavableHighlightCacheInstance;
+import xaeroplus.feature.render.DrawFeatureFactory;
+import xaeroplus.module.Module;
+import xaeroplus.settings.Settings;
+import xaeroplus.util.ChunkScanner;
+import xaeroplus.util.ChunkUtils;
+import xaeroplus.util.ColorHelper;
+
+import java.time.Duration;
+
+import static xaeroplus.util.ColorHelper.getColor;
+
+public class LiquidNewChunks extends Module {
+    // chunks where liquid started flowing from source blocks after we loaded it
+    public final SavableHighlightCacheInstance newChunksCache = new SavableHighlightCacheInstance("XaeroPlusNewChunks");
+    // chunks where liquid was already flowing or flowed when we loaded it
+    public final SavableHighlightCacheInstance inverseNewChunksCache = new SavableHighlightCacheInstance("XaeroPlusNewChunksLiquidInverse");
+    private final Cache<Long, Byte> seenChunksCache = Caffeine.newBuilder()
+        .maximumSize(1000)
+        .executor(Globals.cacheRefreshExecutorService.get())
+        .expireAfterAccess(Duration.ofMinutes(5))
+        .build();
+    private boolean renderInverse = false;
+    private int newChunksColor = getColor(255, 0, 0, 100);
+    private int inverseColor = getColor(0, 255, 0, 100);
+    private static final Direction[] searchDirs = new Direction[] { Direction.EAST, Direction.NORTH, Direction.WEST, Direction.SOUTH, Direction.UP };
+    private static final ReferenceSet<Block> liquidBlockTypeFilter = ReferenceOpenHashSet.of(
+        Blocks.WATER,
+        Blocks.LAVA
+    );
+    private static final String inverseDrawFeatureId = "LiquidNewChunksInverse";
+
+    public void setDiskCache(boolean disk) {
+        newChunksCache.setDiskCache(disk, isEnabled());
+        inverseNewChunksCache.setDiskCache(disk, isEnabled());
+    }
+
+    @EventHandler
+    public void onMultiBlockUpdate(final ChunkBlocksUpdateEvent event) {
+        if (event.phase() != Phase.PRE) return;
+        var level = mc.level;
+        if (level == null || mc.levelRenderer.viewArea == null) return;
+        event.packet().runUpdates((pos, state) -> {
+            handleBlockUpdate(level, pos, state);
+        });
+    }
+
+    @EventHandler
+    public void onBlockUpdate(final ChunkBlockUpdateEvent event) {
+        if (event.phase() != Phase.PRE) return;
+        var level = mc.level;
+        if (level == null || mc.levelRenderer.viewArea == null) return;
+        handleBlockUpdate(level, event.packet().getPos(), event.packet().getBlockState());
+    }
+
+    private void handleBlockUpdate(Level level, BlockPos pos, BlockState state) {
+        if (!state.getFluidState().isEmpty() && !state.getFluidState().isSource()) {
+            int chunkX = ChunkUtils.posToChunkPos(pos.getX());
+            int chunkZ = ChunkUtils.posToChunkPos(pos.getZ());
+            var dim = level.dimension();
+            if (inverseNewChunksCache.get().isHighlighted(chunkX, chunkZ, dim)) return;
+            if (newChunksCache.get().isHighlighted(chunkX, chunkZ, dim)) return;
+            final int srcX = pos.getX();
+            final int srcY = pos.getY();
+            if (Settings.REGISTRY.liquidNewChunksOnlyAboveY0Setting.get() && srcY <= 0) return;
+            final int srcZ = pos.getZ();
+            MutableBlockPos bp = new MutableBlockPos(srcX, srcY, srcZ);
+            for (int i = 0; i < searchDirs.length; i++) {
+                final Direction dir = searchDirs[i];
+                bp.set(srcX + dir.getStepX(), srcY + dir.getStepY(), srcZ + dir.getStepZ());
+                if (level.getBlockState(bp).getFluidState().isSource()) {
+                    newChunksCache.get().addHighlight(chunkX, chunkZ, dim);
+                    return;
+                }
+            }
+        }
+    }
+
+    @EventHandler
+    public void onChunkData(final ChunkDataEvent event) {
+        var level = mc.level;
+        if (level == null || mc.levelRenderer.viewArea == null) return;
+        var chunk = event.chunk();
+        var dim = chunk.getLevel().dimension();
+        var chunkPos = chunk.getPos();
+        long chunkLong = ChunkUtils.chunkPosToLong(chunkPos);
+
+        // only scan the first time we see the chunk
+        // mc server can send us the same chunk multiple times in certain cases
+        // or the player could have travelled back into chunks we just saw
+        if (seenChunksCache.getIfPresent(chunkLong) != null) return;
+        seenChunksCache.put(chunkLong, Byte.MAX_VALUE);
+        if (newChunksCache.get().isHighlighted(chunkPos.x, chunkPos.z, dim)) return;
+        if (inverseNewChunksCache.get().isHighlighted(chunkPos.x, chunkPos.z, dim)) return;
+
+        ChunkScanner.chunkScanBlockstatePredicate(chunk, liquidBlockTypeFilter, (c, state, relX, y, relZ) -> {
+            int x = ChunkUtils.chunkCoordToCoord(c.getPos().x) + relX;
+            int z = ChunkUtils.chunkCoordToCoord(c.getPos().z) + relZ;
+
+            var fluid = state.getFluidState();
+            if (!fluid.isEmpty() && !fluid.isSource()) {
+                if (fluid.getAmount() < 2) {
+                    inverseNewChunksCache.get().addHighlight(c.getPos().x, chunk.getPos().z, dim);
+                    return true;
+                }
+                boolean foundColumn = true;
+                for (int i = 1; i <= 5; i++) {
+                    var aboveState = chunk.getFluidState(x, y + i, z);
+                    if (aboveState.isEmpty() || aboveState.isSource()) {
+                        foundColumn = false;
+                        break;
+                    }
+                }
+                if (foundColumn) {
+                    inverseNewChunksCache.get().addHighlight(c.getPos().x, c.getPos().z, dim);
+                    return true;
+                }
+            }
+            return false;
+        }, Settings.REGISTRY.liquidNewChunksOnlyAboveY0Setting.get()
+            ? Math.max(1, level.getMinY())
+            : level.getMinY());
+    }
+
+    @EventHandler
+    public void onXaeroWorldChangeEvent(final XaeroWorldChangeEvent event) {
+        seenChunksCache.invalidateAll(); // side effect - switching dimensions resets our state
+    }
+
+    public synchronized void setInverseRenderEnabled(final boolean b) {
+        this.renderInverse = b;
+        if (this.renderInverse && this.isEnabled()) {
+            registerInverseChunkHighlightProvider();
+        } else {
+            Globals.drawManager.registry().unregister(inverseDrawFeatureId);
+        }
+    }
+
+    @Override
+    public void onEnable() {
+        Globals.drawManager.registry().register(
+            DrawFeatureFactory.chunkHighlights(
+                "LiquidNewChunks",
+                this::getNewChunkHighlightsState,
+                this::getNewChunksColor,
+                250
+            )
+        );
+        if (renderInverse) {
+            registerInverseChunkHighlightProvider();
+        }
+        newChunksCache.onEnable();
+        inverseNewChunksCache.onEnable();
+    }
+
+    private void registerInverseChunkHighlightProvider() {
+        Globals.drawManager.registry().register(
+            DrawFeatureFactory.chunkHighlights(
+                inverseDrawFeatureId,
+                this::getInverseNewChunkHighlightsState,
+                this::getInverseColor,
+                250
+            )
+        );
+    }
+
+    @Override
+    public void onDisable() {
+        newChunksCache.onDisable();
+        inverseNewChunksCache.onDisable();
+        Globals.drawManager.registry().unregister("LiquidNewChunks");
+        Globals.drawManager.registry().unregister(inverseDrawFeatureId);
+    }
+
+    public int getNewChunksColor() {
+        return newChunksColor;
+    }
+
+    private int getInverseColor() {
+        return this.inverseColor;
+    }
+
+    public void setRgbColor(final int color) {
+        newChunksColor = ColorHelper.getColorWithAlpha(color, Settings.REGISTRY.liquidNewChunksAlphaSetting.getAsInt());
+    }
+
+    public void setInverseRgbColor(final int color) {
+        inverseColor = ColorHelper.getColorWithAlpha(color, Settings.REGISTRY.liquidNewChunksAlphaSetting.getAsInt());
+    }
+
+    public void setAlpha(final double a) {
+        newChunksColor = ColorHelper.getColorWithAlpha(newChunksColor, (int) (a));
+        inverseColor = ColorHelper.getColorWithAlpha(inverseColor, (int) (a));
+    }
+
+    public Long2LongMap getNewChunkHighlightsState(final ResourceKey<Level> dimension) {
+        return newChunksCache.get().getCacheMap(dimension);
+    }
+
+    public Long2LongMap getInverseNewChunkHighlightsState(final ResourceKey<Level> dimension) {
+        return inverseNewChunksCache.get().getCacheMap(dimension);
+    }
+
+    public boolean isNewChunk(final int chunkPosX, final int chunkPosZ, final ResourceKey<Level> dimensionId) {
+        return newChunksCache.get().isHighlighted(chunkPosX, chunkPosZ, dimensionId);
+    }
+
+    public boolean isInverseNewChunk(final int chunkPosX, final int chunkPosZ, final ResourceKey<Level> dimensionId) {
+        return inverseNewChunksCache.get().isHighlighted(chunkPosX, chunkPosZ, dimensionId);
+    }
+}
