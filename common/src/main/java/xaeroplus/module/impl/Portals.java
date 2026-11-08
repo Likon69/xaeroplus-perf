@@ -48,6 +48,7 @@ public class Portals extends Module {
             DrawFeatureFactory.chunkHighlights(
                 "Portals",
                 this::getHighlightsState,
+                this::getHighlightsRevision,
                 this::getPortalsColor,
                 250
             )
@@ -168,5 +169,9 @@ public class Portals extends Module {
 
     public Long2LongMap getHighlightsState(final ResourceKey<Level> dimension) {
         return portalsCache.get().getCacheMap(dimension);
+    }
+
+    public long getHighlightsRevision(final ResourceKey<Level> dimension) {
+        return portalsCache.get().revision(dimension);
     }
 }

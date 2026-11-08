@@ -109,6 +109,7 @@ public class DrawingHighlightCacheDimensionHandler extends ChunkHighlightBaseCac
         // it would have huge benefits if we could optimize this
         // there is no cap on the size of the chunks map
         // so this can require iterating through millions of entries
+        boolean changed = false;
         for (var it = chunks.keySet().longIterator(); it.hasNext(); ) {
             var chunkPos = it.nextLong();
             final int chunkX = ChunkUtils.longToChunkX(chunkPos);
@@ -121,8 +122,10 @@ public class DrawingHighlightCacheDimensionHandler extends ChunkHighlightBaseCac
                     dataBuf.put(chunkPos, chunks.get(chunkPos));
                 }
                 it.remove();
+                changed = true;
             }
         }
+        if (changed) markChanged();
         chunks.trim(64);
         return dbExecutor.submit(() -> database.insertHighlightList(dataBuf, dimension));
     }
@@ -212,7 +215,10 @@ public class DrawingHighlightCacheDimensionHandler extends ChunkHighlightBaseCac
         }
         staleChunks.clear();
         staleChunks.trim(64);
-        chunks.clear();
+        if (!chunks.isEmpty()) {
+            chunks.clear();
+            markChanged();
+        }
         chunks.trim(64);
         dbExecutor.execute(() -> database.removeAllHighlights(dimension));
     }
@@ -267,6 +273,7 @@ public class DrawingHighlightCacheDimensionHandler extends ChunkHighlightBaseCac
             if (dataBuf.isEmpty()) return;
             // write new data to local cache
             chunks.putAll(dataBuf);
+            markChanged();
         }
 
         @Override

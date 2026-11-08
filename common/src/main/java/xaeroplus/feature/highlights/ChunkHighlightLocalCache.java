@@ -47,6 +47,7 @@ public class ChunkHighlightLocalCache extends ChunkHighlightBaseCacheHandler {
                 for (int i = 0; i < toRemove.length; i++) {
                     chunks.remove(toRemove[i]);
                 }
+                if (toRemove.length > 0) markChanged();
             }
         } catch (final Exception e) {
             XaeroPlus.LOGGER.error("Error limiting local cache size", e);
@@ -60,7 +61,10 @@ public class ChunkHighlightLocalCache extends ChunkHighlightBaseCacheHandler {
 
     @Override
     public void handleWorldChange(final XaeroWorldChangeEvent event) {
-        chunks.clear();
+        if (!chunks.isEmpty()) {
+            chunks.clear();
+            markChanged();
+        }
     }
 
     @Override

@@ -42,6 +42,7 @@ public class OldBiomes extends Module {
             DrawFeatureFactory.chunkHighlights(
                 "OldBiomes",
                 this::getHighlightsState,
+                this::getHighlightsRevision,
                 this::getOldBiomesColor,
                 250
             )
@@ -139,6 +140,10 @@ public class OldBiomes extends Module {
 
     public Long2LongMap getHighlightsState(final ResourceKey<Level> dimension) {
         return oldBiomesCache.get().getCacheMap(dimension);
+    }
+
+    public long getHighlightsRevision(final ResourceKey<Level> dimension) {
+        return oldBiomesCache.get().revision(dimension);
     }
 
     public void setDiskCache(final boolean b) {

@@ -13,6 +13,7 @@ public abstract class ChunkHighlightBaseCacheHandler implements ChunkHighlightCa
     public int defaultCapacity = 1024;
     public final Long2LongOpenHashMap chunks = new Long2LongOpenHashMap(defaultCapacity);
     public Minecraft mc = Minecraft.getInstance();
+    private long revision;
 
     public ChunkHighlightBaseCacheHandler() {
         this.chunks.defaultReturnValue(-1);
@@ -33,7 +34,10 @@ public abstract class ChunkHighlightBaseCacheHandler implements ChunkHighlightCa
         if (!mc.isSameThread()) {
             throw new RuntimeException("addHighlight must be called on the main thread!");
         }
-        chunks.put(chunkPosToLong(x, z), foundTime);
+        long pos = chunkPosToLong(x, z);
+        boolean added = !chunks.containsKey(pos);
+        chunks.put(pos, foundTime);
+        if (added) markChanged();
     }
 
     @Override
@@ -46,7 +50,7 @@ public abstract class ChunkHighlightBaseCacheHandler implements ChunkHighlightCa
         if (!mc.isSameThread()) {
             throw new RuntimeException("removeHighlight must be called on the main thread!");
         }
-        chunks.remove(chunkPosToLong(x, z));
+        if (chunks.keySet().remove(chunkPosToLong(x, z))) markChanged();
     }
 
     @Override
@@ -59,7 +63,9 @@ public abstract class ChunkHighlightBaseCacheHandler implements ChunkHighlightCa
         if (!mc.isSameThread()) {
             throw new RuntimeException("removeHighlights must be called on the main thread!");
         }
+        int previousSize = chunks.size();
         toRemove.forEach(this.chunks::remove);
+        if (chunks.size() != previousSize) markChanged();
     }
 
     @Override
@@ -77,6 +83,15 @@ public abstract class ChunkHighlightBaseCacheHandler implements ChunkHighlightCa
         return chunks;
     }
 
+    @Override
+    public long revision(final ResourceKey<Level> dimensionId) {
+        return revision;
+    }
+
+    protected void markChanged() {
+        revision++;
+    }
+
     public boolean isHighlighted(final long chunkPos) {
         return chunks.containsKey(chunkPos);
     }
@@ -88,6 +103,7 @@ public abstract class ChunkHighlightBaseCacheHandler implements ChunkHighlightCa
         this.chunks.clear();
         this.chunks.trim(defaultCapacity);
         this.chunks.putAll(state);
+        markChanged();
     }
 
     public void reset() {
@@ -96,5 +112,6 @@ public abstract class ChunkHighlightBaseCacheHandler implements ChunkHighlightCa
         }
         chunks.clear();
         chunks.trim(defaultCapacity);
+        markChanged();
     }
 }

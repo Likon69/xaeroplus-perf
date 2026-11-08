@@ -116,6 +116,7 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
         // it would have huge benefits if we could optimize this
         // there is no cap on the size of the chunks map
         // so this can require iterating through millions of entries
+        boolean changed = false;
         for (var it = chunks.keySet().longIterator(); it.hasNext(); ) {
             var chunkPos = it.nextLong();
             final int chunkX = ChunkUtils.longToChunkX(chunkPos);
@@ -128,8 +129,10 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
                     dataBuf.put(chunkPos, chunks.get(chunkPos));
                 }
                 it.remove();
+                changed = true;
             }
         }
+        if (changed) markChanged();
         chunks.trim(Math.max(defaultCapacity, chunks.size()));
         if (dataBuf.isEmpty()) return Futures.immediateVoidFuture();
         return dbExecutor.submit(() -> database.insertHighlightList(dataBuf, dimension));
@@ -239,7 +242,7 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
         if (!mc.isSameThread()) {
             throw new RuntimeException("removeHighlights must be called on the main thread!");
         }
-        toRemove.forEach(this.chunks::remove);
+        super.removeHighlights(toRemove);
         staleToRemoveChunks.addAll(toRemove);
     }
 
@@ -293,6 +296,7 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
             if (dataBuf.isEmpty()) return;
             // write new data to local cache
             chunks.putAll(dataBuf);
+            markChanged();
         }
 
         @Override

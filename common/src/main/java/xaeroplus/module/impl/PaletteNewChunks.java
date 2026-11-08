@@ -248,6 +248,7 @@ public class PaletteNewChunks extends Module {
             DrawFeatureFactory.chunkHighlights(
                 "PaletteNewChunks",
                 this::getHighlightsState,
+                this::getHighlightsRevision,
                 this::getNewChunksColor,
                 250
             )
@@ -297,6 +298,12 @@ public class PaletteNewChunks extends Module {
         return renderInverse
             ? newChunksInverseCache.get().getCacheMap(dimension)
             : newChunksCache.get().getCacheMap(dimension);
+    }
+
+    public long getHighlightsRevision(final ResourceKey<Level> dimension) {
+        return renderInverse
+            ? newChunksInverseCache.get().revision(dimension)
+            : newChunksCache.get().revision(dimension);
     }
 
     public boolean isNewChunk(final int chunkPosX, final int chunkPosZ, final ResourceKey<Level> dimensionId) {

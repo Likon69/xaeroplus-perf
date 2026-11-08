@@ -104,6 +104,7 @@ public class OldChunks extends Module {
             DrawFeatureFactory.chunkHighlights(
                 "OldChunks",
                 this::getHighlightsState,
+                this::getHighlightsRevision,
                 this::getOldChunksColor,
                 250
             )
@@ -158,6 +159,12 @@ public class OldChunks extends Module {
         return inverse
             ? modernChunksCache.get().getCacheMap(dimension)
             : oldChunksCache.get().getCacheMap(dimension);
+    }
+
+    public long getHighlightsRevision(final ResourceKey<Level> dimension) {
+        return inverse
+            ? modernChunksCache.get().revision(dimension)
+            : oldChunksCache.get().revision(dimension);
     }
 
     public boolean isOldChunk(final int chunkPosX, final int chunkPosZ, final ResourceKey<Level> dimensionId) {
