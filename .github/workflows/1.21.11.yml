@@ -108,7 +108,7 @@ jobs:
         if-no-files-found: error
 
     - name: Upload NeoForge Artifact
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ env.XP_NEO_OUT }}
         path: neo/build/libs/${{ env.XP_NEO_OUT }}.jar
@@ -294,7 +294,7 @@ jobs:
           distribution: 'temurin'
 
       - name: Download job artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           merge-multiple: true
           path: artifacts/
