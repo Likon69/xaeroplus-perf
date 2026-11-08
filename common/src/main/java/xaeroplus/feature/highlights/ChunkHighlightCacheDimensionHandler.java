@@ -19,6 +19,7 @@ import static xaeroplus.util.ChunkUtils.regionCoordToChunkCoord;
 
 public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCacheHandler {
     private final String name;
+    private final ChunkBounds retained = new ChunkBounds();
     @NotNull private final ResourceKey<Level> dimension;
     private int windowRegionX = 0;
     private int windowRegionZ = 0;
@@ -79,7 +80,12 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
 
     private ListenableFuture<?> moveWindow0(final int windowRegionX, final int windowRegionZ, final int windowRegionSize, final int prevWindowRegionX, final int prevWindowRegionZ, final int prevWindowRegionSize) {
         var loadDataFuture = dbExecutor.submit(() -> loadUpdatedWindowFromDatabase(windowRegionX, windowRegionZ, windowRegionSize, prevWindowRegionX, prevWindowRegionZ, prevWindowRegionSize));
-        Futures.addCallback(loadDataFuture, new WindowDataLoadFutureCallback(), mc);
+        Futures.addCallback(loadDataFuture, new WindowDataLoadFutureCallback(
+            regionCoordToChunkCoord(windowRegionX - windowRegionSize),
+            regionCoordToChunkCoord(windowRegionX + windowRegionSize),
+            regionCoordToChunkCoord(windowRegionZ - windowRegionSize),
+            regionCoordToChunkCoord(windowRegionZ + windowRegionSize)
+        ), mc);
         // must collect what to delete before flushOutsideWindowFuture
         // so that we can double check that chunks map doesn't contain any staleToRemove chunks
         var flushToDeleteChunksFuture = flushStaleToRemoveChunks();
@@ -112,6 +118,7 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
         var chunkXMax = regionCoordToChunkCoord(windowRegionX + windowRegionSize);
         var chunkZMin = regionCoordToChunkCoord(windowRegionZ - windowRegionSize);
         var chunkZMax = regionCoordToChunkCoord(windowRegionZ + windowRegionSize);
+        if (retained.isWithin(chunkXMin, chunkXMax, chunkZMin, chunkZMax)) return Futures.immediateVoidFuture();
         // critical section in mc client tick thread
         // it would have huge benefits if we could optimize this
         // there is no cap on the size of the chunks map
@@ -132,6 +139,7 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
                 changed = true;
             }
         }
+        retained.set(chunkXMin, chunkXMax, chunkZMin, chunkZMax);
         if (changed) markChanged();
         chunks.trim(Math.max(defaultCapacity, chunks.size()));
         if (dataBuf.isEmpty()) return Futures.immediateVoidFuture();
@@ -206,6 +214,7 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
     @Override
     public void addHighlight(final int x, final int z, final long foundTime) {
         super.addHighlight(x, z, foundTime);
+        retained.include(x, z);
         var pos = chunkPosToLong(x, z);
         staleChunks.add(pos);
         staleToRemoveChunks.remove(pos);
@@ -288,6 +297,18 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
     public void onDisable() {}
 
     private final class WindowDataLoadFutureCallback implements FutureCallback<Long2LongMap> {
+        private final int minX;
+        private final int maxX;
+        private final int minZ;
+        private final int maxZ;
+
+        private WindowDataLoadFutureCallback(int minX, int maxX, int minZ, int maxZ) {
+            this.minX = minX;
+            this.maxX = maxX;
+            this.minZ = minZ;
+            this.maxZ = maxZ;
+        }
+
         @Override
         public void onSuccess(Long2LongMap dataBuf) {
             if (!mc.isSameThread()) {
@@ -295,6 +316,7 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
             }
             if (dataBuf.isEmpty()) return;
             // write new data to local cache
+            retained.include(minX, maxX, minZ, maxZ);
             chunks.putAll(dataBuf);
             markChanged();
         }
