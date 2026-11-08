@@ -476,6 +476,7 @@ public class ChunkHighlightSavingCache implements ChunkHighlightCache, Closeable
             throw new RuntimeException("handleTick must be called on the main thread");
         }
         if (!cacheReady.get()) return;
+        for (var cache : dimensionCacheMap.values()) cache.continueEviction();
         for (var cache : dimensionCacheMap.values()) cache.integratePendingLoads();
         if (XaeroWorldMapCore.currentSession == null) return;
         // reduce likelihood of all caches updating at the same time

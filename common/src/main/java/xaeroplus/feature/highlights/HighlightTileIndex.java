@@ -64,6 +64,10 @@ public final class HighlightTileIndex {
     }
 
     public void evictOutside(int minX, int maxX, int minZ, int maxZ, LongConsumer evicted) {
+        evictOutside(minX, maxX, minZ, maxZ, evicted, Long.MAX_VALUE);
+    }
+
+    public boolean evictOutside(int minX, int maxX, int minZ, int maxZ, LongConsumer evicted, long deadlineNanos) {
         checkMutable();
         for (var it = tiles.long2ObjectEntrySet().fastIterator(); it.hasNext(); ) {
             var entry = it.next();
@@ -79,7 +83,9 @@ public final class HighlightTileIndex {
                 it.remove();
                 revisions.remove(key);
                 generation++;
+                if (System.nanoTime() >= deadlineNanos) return false;
             } else {
+                boolean modified = false;
                 for (var positions = keys.iterator(); positions.hasNext(); ) {
                     long pos = positions.nextLong();
                     int x = ChunkUtils.longToChunkX(pos);
@@ -88,14 +94,17 @@ public final class HighlightTileIndex {
                         positions.remove();
                         revisions.put(key, ++generation);
                         evicted.accept(pos);
+                        modified = true;
                     }
                 }
                 if (keys.isEmpty()) {
                     it.remove();
                     revisions.remove(key);
                 }
+                if (modified && System.nanoTime() >= deadlineNanos) return false;
             }
         }
+        return true;
     }
 
     private static long tileKey(long pos) {

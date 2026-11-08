@@ -23,6 +23,7 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
     private final String name;
     private final ChunkBounds retained = new ChunkBounds();
     private ChunkRect loaded = ChunkRect.EMPTY;
+    private ChunkRect evictionTarget = null;
     private long retentionStartMs;
     private final ArrayDeque<PendingHighlightLoad> pendingLoads = new ArrayDeque<>();
     private final LongOpenHashSet suppressedKeys = new LongOpenHashSet();
@@ -63,7 +64,7 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
         }
         boolean windowChanged = regionX != windowRegionX || regionZ != windowRegionZ || regionSize != windowRegionSize;
         if (windowChanged
-            && (!windowMoveFuture.isDone() || !pendingLoads.isEmpty())
+            && !windowMoveFuture.isDone()
             && (regionX != 0 || regionZ != 0 || regionSize != 0) // queue window change if we are clearing it (setting size to 0)
         ) {
             XaeroPlus.LOGGER.debug("Rejecting window move to: [{} {} {}] from: [{} {} {}]", regionX, regionZ, regionSize, windowRegionX, windowRegionZ, windowRegionSize);
@@ -142,7 +143,6 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
         if (!mc.isSameThread()) {
             throw new RuntimeException("removeChunksOutsideWindow must be called on the main thread");
         }
-        Long2LongMap dataBuf = new Long2LongOpenHashMap(64);
         // write to db and remove data from local cache outside window
         var chunkXMin = regionCoordToChunkCoord(windowRegionX - windowRegionSize);
         var chunkXMax = regionCoordToChunkCoord(windowRegionX + windowRegionSize);
@@ -154,18 +154,31 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
             && chunks.size() <= MAX_RETAINED_CHUNKS) {
             return Futures.immediateVoidFuture();
         }
-        // critical section in mc client tick thread
-        // it would have huge benefits if we could optimize this
-        // there is no cap on the size of the chunks map
-        // so this can require iterating through millions of entries
-        index.evictOutside(chunkXMin, chunkXMax, chunkZMin, chunkZMax, pos -> {
+        var target = new ChunkRect(chunkXMin, chunkXMax, chunkZMin, chunkZMax);
+        loaded = loaded.intersect(target);
+        evictionTarget = target;
+        return continueEviction();
+    }
+
+    public ListenableFuture<?> continueEviction() {
+        if (!mc.isSameThread()) {
+            throw new RuntimeException("continueEviction must be called on the main thread");
+        }
+        var target = evictionTarget;
+        if (target == null) return Futures.immediateVoidFuture();
+        Long2LongMap dataBuf = new Long2LongOpenHashMap(64);
+        long started = System.nanoTime();
+        boolean finished = index.evictOutside(target.minX(), target.maxX(), target.minZ(), target.maxZ(), pos -> {
             if (staleChunks.contains(pos)) dataBuf.put(pos, chunks.get(pos));
             removeChunk(pos, false);
-        });
-        chunks.trim(Math.max(defaultCapacity, chunks.size()));
-        retained.set(chunkXMin, chunkXMax, chunkZMin, chunkZMax);
-        loaded = loaded.intersect(new ChunkRect(chunkXMin, chunkXMax, chunkZMin, chunkZMax));
-        retentionStartMs = System.currentTimeMillis();
+        }, started + HighlightTickBudget.remainingNanos());
+        HighlightTickBudget.consume(System.nanoTime() - started);
+        if (finished) {
+            chunks.trim(Math.max(defaultCapacity, chunks.size()));
+            retained.set(target.minX(), target.maxX(), target.minZ(), target.maxZ());
+            retentionStartMs = System.currentTimeMillis();
+            evictionTarget = null;
+        }
         if (dataBuf.isEmpty()) return Futures.immediateVoidFuture();
         return dbExecutor.submit(() -> database.insertHighlightList(dataBuf, dimension));
     }
@@ -323,6 +336,11 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
         }
         clearSuppressedKeys();
         if (pendingLoads.isEmpty() || HighlightTickBudget.remainingNanos() <= 0) return;
+        var chunkXMin = regionCoordToChunkCoord(windowRegionX - windowRegionSize);
+        var chunkXMax = regionCoordToChunkCoord(windowRegionX + windowRegionSize);
+        var chunkZMin = regionCoordToChunkCoord(windowRegionZ - windowRegionSize);
+        var chunkZMax = regionCoordToChunkCoord(windowRegionZ + windowRegionSize);
+        boolean skipped = false;
         long started = System.nanoTime();
         long budget = HighlightTickBudget.remainingNanos();
         try {
@@ -335,12 +353,19 @@ public class ChunkHighlightCacheDimensionHandler extends ChunkHighlightBaseCache
                 long pos = load.nextKey();
                 long foundTime = load.nextValue();
                 if (suppressedKeys.contains(pos)) continue;
+                int chunkX = ChunkUtils.longToChunkX(pos);
+                int chunkZ = ChunkUtils.longToChunkZ(pos);
+                if (chunkX < chunkXMin || chunkX > chunkXMax || chunkZ < chunkZMin || chunkZ > chunkZMax) {
+                    skipped = true;
+                    continue;
+                }
                 putChunk(pos, foundTime);
-                retained.include(ChunkUtils.longToChunkX(pos), ChunkUtils.longToChunkZ(pos));
+                retained.include(chunkX, chunkZ);
             }
         } finally {
             HighlightTickBudget.consume(System.nanoTime() - started);
         }
+        if (skipped) loaded = loaded.intersect(new ChunkRect(chunkXMin, chunkXMax, chunkZMin, chunkZMax));
         clearSuppressedKeys();
     }
 
